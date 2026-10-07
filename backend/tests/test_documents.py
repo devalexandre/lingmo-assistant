@@ -45,3 +45,14 @@ def test_text_html_and_unsupported(tmp_path):
     (tmp_path / "bin.txt").write_bytes(b"\0\1\2")
     with pytest.raises(documents.DocumentError, match="binário"):
         documents.extract_text(tmp_path / "bin.txt")
+
+
+@pytest.mark.skipif(not all(__import__("shutil").which(p) for p in ("ps2pdf", "pdftotext", "bwrap")),
+                    reason="ghostscript, poppler or bwrap missing")
+def test_pdf_in_sandbox(tmp_path):
+    import subprocess
+    ps = tmp_path / "t.ps"
+    ps.write_text("%!PS\n/Helvetica findfont 14 scalefont setfont\n72 700 moveto (Vendas subiram 12) show\nshowpage\n")
+    subprocess.run(["ps2pdf", str(ps), str(tmp_path / "t.pdf")], check=True)
+    # tmp_path is under /tmp, which the sandbox hides: the file is exposed explicitly
+    assert documents.extract_text(tmp_path / "t.pdf") == "Vendas subiram 12"

@@ -342,7 +342,9 @@ def parse(command_line: str, policy: paths.PathPolicy, which=None) -> list[str]:
 
 def run(command_line: str, policy: paths.PathPolicy) -> tuple[bool, str]:
     argv = parse(command_line, policy)
-    result = sandbox.run(argv, devices=os.path.basename(argv[0]) == "nvidia-smi")
+    # Path arguments were resolved and checked by the policy (du, ls, df)
+    exposed = [a for a in argv[1:] if a.startswith("/")]
+    result = sandbox.run(argv, devices=os.path.basename(argv[0]) == "nvidia-smi", expose=exposed)
     text = result.output
     if result.timed_out:
         text += "\n[interrompido: passou de %d s]" % sandbox.TIMEOUT

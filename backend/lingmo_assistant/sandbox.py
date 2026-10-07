@@ -57,9 +57,11 @@ def mask_args(home: Path | None = None) -> list[str]:
 
 
 def build_argv(command: list[str], home: Path | None = None, bwrap: str | None = None,
-               devices: bool = False) -> list[str]:
+               devices: bool = False, expose: list[str] | None = None) -> list[str]:
     """devices=True exposes the host /dev (nvidia-smi needs the GPU nodes);
-    otherwise the program gets a minimal private /dev."""
+    otherwise the program gets a minimal private /dev. `expose` lists files or
+    folders (already checked by the path policy) bound read-only again on top,
+    so an allowed folder under /tmp stays visible."""
     if not command or not os.path.isabs(command[0]):
         raise SandboxError("Comando precisa de caminho absoluto.")
     bwrap = bwrap or bwrap_path()
@@ -98,14 +100,17 @@ def build_argv(command: list[str], home: Path | None = None, bwrap: str | None =
     for key, value in env.items():
         argv += ["--setenv", key, value]
     argv += mask_args(home)
+    for path in expose or []:
+        if os.path.isabs(path) and os.path.exists(path) and not paths.is_blocked(Path(os.path.realpath(path)), home):
+            argv += ["--ro-bind", path, path]
     argv += ["--chdir", "/", "--"]
     argv += command
     return argv
 
 
 def run(command: list[str], timeout: int = TIMEOUT, limit: int = OUTPUT_LIMIT,
-        devices: bool = False) -> Result:
-    argv = build_argv(command, devices=devices)
+        devices: bool = False, expose: list[str] | None = None) -> Result:
+    argv = build_argv(command, devices=devices, expose=expose)
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, close_fds=True, start_new_session=True)

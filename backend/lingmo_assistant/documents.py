@@ -174,7 +174,7 @@ def pdf_text(path: Path) -> str:
         raise DocumentError("Para ler PDF instale o pacote poppler (pdftotext).")
     try:
         result = sandbox.run([program, "-enc", "UTF-8", "-l", "300", "-nopgbrk", str(path), "-"],
-                             timeout=30, limit=MAX_TEXT * 4)
+                             timeout=30, limit=MAX_TEXT * 4, expose=[str(path)])
     except sandbox.SandboxError as exc:
         raise DocumentError(str(exc)) from exc
     if result.timed_out:
