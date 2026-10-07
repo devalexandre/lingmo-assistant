@@ -1,0 +1,9 @@
+#!/usr/bin/python3 -I
+# Lingmo Assistente engine launcher (NDJSON on stdin/stdout, see docs/protocol.md).
+# -I: no user site-packages, no PYTHONPATH, no current directory on sys.path.
+import sys
+
+sys.path.insert(0, "@ENGINE_DIR@")
+from lingmo_assistant.engine import main  # noqa: E402
+
+sys.exit(main())

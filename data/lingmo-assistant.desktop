@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Assistant
+Name[pt_BR]=Assistente
+GenericName=AI Assistant
+GenericName[pt_BR]=Assistente de IA
+Comment=Local AI assistant: documents, notes, calendar and system
+Comment[pt_BR]=Assistente de IA local: documentos, notas, agenda e sistema
+Exec=lingmo-assistant
+Icon=internet-chat
+Terminal=false
+StartupNotify=true
+Categories=Utility;Qt;
+Keywords=AI;IA;assistant;assistente;chat;ollama;

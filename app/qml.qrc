@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/">
+        <file>qml/Main.qml</file>
+        <file>qml/SideBar.qml</file>
+        <file>qml/ToolCard.qml</file>
+        <file>qml/ConfirmCard.qml</file>
+        <file>qml/Card.qml</file>
+        <file>qml/ActionButton.qml</file>
+        <file>qml/IconButton.qml</file>
+    </qresource>
+</RCC>
