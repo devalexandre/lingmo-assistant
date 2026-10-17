@@ -36,6 +36,7 @@ static void applyIconTheme()
     const bool dark = theme.value(QStringLiteral("DarkMode"), false).toBool();
     const QStringList candidates = {
         theme.value(dark ? QStringLiteral("DarkIconTheme") : QStringLiteral("IconTheme")).toString(),
+        dark ? QStringLiteral("Lingmo-dark") : QStringLiteral("Lingmo"),
         dark ? QStringLiteral("Crule-dark") : QStringLiteral("Crule"),
         QStringLiteral("breeze"),
     };
@@ -84,7 +85,7 @@ int main(int argc, char *argv[])
         return 0;
     }
     applyIconTheme();
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("internet-chat")));
+    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("lingmo-assistant"), QIcon::fromTheme(QStringLiteral("internet-chat"))));
 
     Assistant assistant;
     bus.registerObject(DBusPath, &assistant, QDBusConnection::ExportAllSlots);
