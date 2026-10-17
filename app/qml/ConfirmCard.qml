@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import LingmoUI.CompatibleModule 3.0 as LingmoUI
 
 // A write the assistant wants to make: exactly what and where, Allow / Decline
-Card {
+LingmoUI.Card {
     id: card
 
     property string requestId
@@ -22,7 +22,7 @@ Card {
         border.width: 1.5
         border.color: LingmoUI.Theme.highlightColor
         opacity: card.confirmState === "pending" ? 1 : 0
-        Behavior on opacity { NumberAnimation { duration: 200 } }
+        Behavior on opacity { NumberAnimation { duration: LingmoUI.Units.shortDuration } }
     }
 
     ColumnLayout {
@@ -31,21 +31,21 @@ Card {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.margins: LingmoUI.Units.largeSpacing
-        anchors.leftMargin: LingmoUI.Units.largeSpacing * 1.5
-        anchors.rightMargin: LingmoUI.Units.largeSpacing * 1.5
+        anchors.leftMargin: card.padding
+        anchors.rightMargin: card.padding
         spacing: LingmoUI.Units.smallSpacing
 
         Label {
             text: qsTr("The assistant asks for permission")
-            color: LingmoUI.Theme.disabledTextColor
-            font.pointSize: LingmoUI.Theme.fontSize * 0.9
+            color: LingmoUI.Theme.secondaryTextColor
+            font.pointSize: LingmoUI.Units.fontCaption
         }
 
         Label {
             Layout.fillWidth: true
             text: card.title
             font.bold: true
-            font.pointSize: LingmoUI.Theme.fontSize * 1.1
+            font.pointSize: LingmoUI.Units.fontSubheading
             wrapMode: Text.Wrap
             color: LingmoUI.Theme.textColor
         }
@@ -74,7 +74,7 @@ Card {
                     textFormat: TextEdit.PlainText
                     text: card.details
                     font.family: "monospace"
-                    font.pointSize: LingmoUI.Theme.fontSize * 0.85
+                    font.pointSize: LingmoUI.Units.fontCaption
                     color: LingmoUI.Theme.textColor
                     selectionColor: LingmoUI.Theme.highlightColor
                     selectedTextColor: LingmoUI.Theme.highlightedTextColor
@@ -93,19 +93,21 @@ Card {
                 text: card.confirmState === "allowed" ? qsTr("Allowed")
                     : card.confirmState === "denied" ? qsTr("Declined: nothing was changed")
                     : qsTr("This request is no longer valid")
-                color: card.confirmState === "allowed" ? LingmoUI.Theme.greenColor : LingmoUI.Theme.disabledTextColor
+                font.pointSize: LingmoUI.Units.fontBody
+                color: card.confirmState === "allowed" ? LingmoUI.Theme.successColor : LingmoUI.Theme.secondaryTextColor
             }
 
             Item { Layout.fillWidth: true; visible: card.confirmState === "pending" }
 
-            ActionButton {
+            LingmoUI.ActionButton {
                 visible: card.confirmState === "pending"
                 text: qsTr("Decline")
                 destructive: true
+                subtle: true
                 onClicked: assistant.confirm(card.requestId, false)
             }
 
-            ActionButton {
+            LingmoUI.ActionButton {
                 visible: card.confirmState === "pending"
                 text: qsTr("Allow")
                 primary: true

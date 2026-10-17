@@ -14,7 +14,7 @@ LingmoUI.Window {
 
     // Same window look as Lingmo Settings
     background.opacity: LingmoUI.Theme.darkMode ? 0.88 : 0.97
-    header.height: 40
+    header.height: LingmoUI.Units.windowHeaderHeight
     contentTopMargin: 0
 
     LingmoUI.WindowBlur {
@@ -51,9 +51,117 @@ LingmoUI.Window {
         anchors.fill: parent
         spacing: 0
 
-        SideBar {
+        // Conversations on the left, in the style of Lingmo Settings' sidebar
+        Item {
             id: sideBar
             Layout.fillHeight: true
+            implicitWidth: LingmoUI.Units.sideBarWidth
+
+            Rectangle {
+                anchors.fill: parent
+                color: LingmoUI.Theme.sideBarColor
+                Behavior on color {
+                    ColorAnimation { duration: LingmoUI.Units.longDuration; easing.type: Easing.Linear }
+                }
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 0
+
+                // The window's buttons sit in this strip
+                Item { Layout.preferredHeight: rootWindow.header.height }
+
+                Label {
+                    text: rootWindow.title
+                    color: rootWindow.active ? LingmoUI.Theme.textColor : LingmoUI.Theme.secondaryTextColor
+                    leftPadding: LingmoUI.Units.largeSpacing + LingmoUI.Units.smallSpacing
+                    rightPadding: LingmoUI.Units.largeSpacing + LingmoUI.Units.smallSpacing
+                    topPadding: 2
+                    bottomPadding: LingmoUI.Units.smallSpacing * 1.5
+                    font.pointSize: LingmoUI.Units.fontTitle
+                    font.bold: true
+                    fontSizeMode: Text.HorizontalFit
+                    minimumPointSize: LingmoUI.Units.fontSubheading
+                    Layout.fillWidth: true
+                }
+
+                LingmoUI.SideBarItem {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: LingmoUI.Units.largeSpacing
+                    Layout.rightMargin: LingmoUI.Units.largeSpacing
+                    title: qsTr("New conversation")
+                    iconName: "document-new"
+                    isCurrent: assistant.messages.count === 0
+                    onClicked: {
+                        assistant.newConversation()
+                        rootWindow.focusComposer()
+                    }
+                }
+
+                Label {
+                    visible: conversationList.count > 0
+                    text: qsTr("History")
+                    color: LingmoUI.Theme.secondaryTextColor
+                    font.pointSize: LingmoUI.Units.fontCaption
+                    font.weight: Font.DemiBold
+                    leftPadding: LingmoUI.Units.largeSpacing + LingmoUI.Units.smallSpacing
+                    topPadding: LingmoUI.Units.largeSpacing
+                    bottomPadding: LingmoUI.Units.smallSpacing
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    ListView {
+                        id: conversationList
+                        anchors.fill: parent
+                        clip: true
+                        model: assistant.conversations
+                        spacing: LingmoUI.Units.smallSpacing / 2
+                        leftMargin: LingmoUI.Units.largeSpacing
+                        rightMargin: LingmoUI.Units.largeSpacing
+                        bottomMargin: LingmoUI.Units.largeSpacing
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+
+                        LingmoUI.WheelHandler { target: conversationList }
+
+                        delegate: LingmoUI.SideBarItem {
+                            id: conversationItem
+                            required property var model
+                            readonly property string conversationId: model.conversationId
+
+                            width: ListView.view.width - ListView.view.leftMargin - ListView.view.rightMargin
+                            title: model.title
+                            isCurrent: conversationId === assistant.conversationId && assistant.messages.count > 0
+                            onClicked: assistant.openConversation(conversationId)
+
+                            LingmoUI.IconButton {
+                                visible: conversationItem.hovered || hovered
+                                iconName: "edit-delete"
+                                tipText: qsTr("Delete conversation")
+                                size: LingmoUI.Units.iconSizes.smallMedium + 4
+                                onClicked: assistant.deleteConversation(conversationItem.conversationId)
+                            }
+                        }
+                    }
+
+                    LingmoUI.EmptyState {
+                        visible: conversationList.count === 0
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: -LingmoUI.Units.largeSpacing * 3
+                        anchors.leftMargin: LingmoUI.Units.largeSpacing * 1.5
+                        anchors.rightMargin: LingmoUI.Units.largeSpacing * 1.5
+                        iconName: "document-open-recent"
+                        iconSize: LingmoUI.Units.iconSizes.large
+                        text: qsTr("Your conversations will appear here.")
+                    }
+                }
+            }
         }
 
         ColumnLayout {
@@ -61,22 +169,14 @@ LingmoUI.Window {
             Layout.fillHeight: true
             spacing: 0
 
-            // Page title, like Lingmo Settings' ItemPage header
-            Item {
+            // Page title, in the window's header strip
+            LingmoUI.PageHeader {
                 Layout.fillWidth: true
                 Layout.preferredHeight: rootWindow.header.height
-
-                Label {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    leftPadding: LingmoUI.Units.largeSpacing * 3
-                    rightPadding: LingmoUI.Units.largeSpacing * 3
-                    topPadding: LingmoUI.Units.largeSpacing
-                    font.pointSize: 12
-                    elide: Text.ElideRight
-                    color: rootWindow.active ? LingmoUI.Theme.textColor : LingmoUI.Theme.disabledTextColor
-                    text: assistant.title !== "" ? assistant.title : qsTr("New conversation")
-                }
+                leftPadding: LingmoUI.Units.largeSpacing * 3
+                rightPadding: LingmoUI.Units.largeSpacing * 3
+                large: false
+                title: assistant.title !== "" ? assistant.title : qsTr("New conversation")
             }
 
             // ------------------------------------------------ empty state
@@ -90,30 +190,16 @@ LingmoUI.Window {
 
                 Item { Layout.fillHeight: true }
 
-                LingmoUI.IconItem {
-                    Layout.alignment: Qt.AlignHCenter
-                    Layout.preferredWidth: LingmoUI.Units.iconSizes.large * 1.5
-                    Layout.preferredHeight: LingmoUI.Units.iconSizes.large * 1.5
-                    source: "internet-chat"
-                }
-
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: qsTr("How can I help?")
-                    font.pointSize: LingmoUI.Theme.fontSize * 1.6
-                    font.bold: true
-                    color: LingmoUI.Theme.textColor
-                }
-
-                Label {
+                LingmoUI.EmptyState {
                     Layout.alignment: Qt.AlignHCenter
                     Layout.fillWidth: true
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.Wrap
+                    Layout.maximumWidth: 640
+                    iconName: "internet-chat"
+                    iconSize: LingmoUI.Units.iconSizes.large * 1.5
+                    title: qsTr("How can I help?")
                     text: assistant.engineInstalled
                           ? qsTr("I run on this computer. I can read your documents, notes and calendar, look at the system and, with your permission, write notes, events and files.")
                           : qsTr("The assistant engine isn't installed.")
-                    color: LingmoUI.Theme.disabledTextColor
                 }
 
                 GridLayout {
@@ -132,9 +218,10 @@ LingmoUI.Window {
                             { text: qsTr("Create a note with "), send: false, icon: "document-edit" },
                             { text: qsTr("Remind me tomorrow at 9 to "), send: false, icon: "appointment-new" },
                         ]
-                        delegate: Card {
+                        delegate: LingmoUI.Card {
+                            id: exampleCard
                             required property var modelData
-                            hoverEnabled: true
+                            clickable: true
                             Layout.fillWidth: true
                             Layout.preferredWidth: 300
                             implicitHeight: exampleRow.implicitHeight + LingmoUI.Units.largeSpacing * 2
@@ -142,8 +229,8 @@ LingmoUI.Window {
                             RowLayout {
                                 id: exampleRow
                                 anchors.fill: parent
-                                anchors.leftMargin: LingmoUI.Units.largeSpacing * 1.5
-                                anchors.rightMargin: LingmoUI.Units.largeSpacing * 1.5
+                                anchors.leftMargin: exampleCard.padding
+                                anchors.rightMargin: exampleCard.padding
                                 spacing: LingmoUI.Units.largeSpacing
 
                                 LingmoUI.IconItem {
@@ -155,20 +242,19 @@ LingmoUI.Window {
                                     Layout.fillWidth: true
                                     text: modelData.text.trim() + (modelData.send ? "" : "…")
                                     wrapMode: Text.Wrap
+                                    font.pointSize: LingmoUI.Units.fontBody
                                     color: LingmoUI.Theme.textColor
                                 }
                             }
 
-                            TapHandler {
-                                onTapped: {
-                                    if (modelData.send) {
-                                        assistant.send(modelData.text)
-                                        rootWindow.focusComposer()
-                                    } else {
-                                        input.text = modelData.text
-                                        input.cursorPosition = input.text.length
-                                        rootWindow.focusComposer()
-                                    }
+                            onClicked: {
+                                if (modelData.send) {
+                                    assistant.send(modelData.text)
+                                    rootWindow.focusComposer()
+                                } else {
+                                    input.text = modelData.text
+                                    input.cursorPosition = input.text.length
+                                    rootWindow.focusComposer()
                                 }
                             }
                         }
@@ -259,7 +345,7 @@ LingmoUI.Window {
                                     textFormat: TextEdit.PlainText
                                     text: row.text
                                     color: LingmoUI.Theme.highlightedTextColor
-                                    font.pointSize: LingmoUI.Theme.fontSize
+                                    font.pointSize: LingmoUI.Units.fontBody
                                 }
                             }
                         }
@@ -271,21 +357,34 @@ LingmoUI.Window {
                             spacing: 2
                             HoverHandler { id: answerHover }
 
-                            TextEdit {
+                            RowLayout {
                                 Layout.fillWidth: true
-                                readOnly: true
-                                selectByMouse: true
-                                wrapMode: TextEdit.Wrap
-                                textFormat: row.text !== "" ? TextEdit.MarkdownText : TextEdit.PlainText
-                                text: row.text !== "" ? row.text
-                                      : (row.thinking ? qsTr("Reasoning… %1 s") : qsTr("Thinking… %1 s")).arg(rootWindow.waited)
-                                color: row.text !== "" ? LingmoUI.Theme.textColor : LingmoUI.Theme.disabledTextColor
-                                font.pointSize: LingmoUI.Theme.fontSize
-                                selectionColor: LingmoUI.Theme.highlightColor
-                                selectedTextColor: LingmoUI.Theme.highlightedTextColor
-                                onLinkActivated: (link) => {
-                                    if (/^https?:\/\//.test(link))
-                                        Qt.openUrlExternally(link)
+                                spacing: LingmoUI.Units.smallSpacing
+
+                                // Waiting for the first words of the answer
+                                LingmoUI.Spinner {
+                                    visible: row.text === ""
+                                    running: visible
+                                    size: LingmoUI.Units.iconSizes.small
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+
+                                TextEdit {
+                                    Layout.fillWidth: true
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: TextEdit.Wrap
+                                    textFormat: row.text !== "" ? TextEdit.MarkdownText : TextEdit.PlainText
+                                    text: row.text !== "" ? row.text
+                                          : (row.thinking ? qsTr("Reasoning… %1 s") : qsTr("Thinking… %1 s")).arg(rootWindow.waited)
+                                    color: row.text !== "" ? LingmoUI.Theme.textColor : LingmoUI.Theme.secondaryTextColor
+                                    font.pointSize: LingmoUI.Units.fontBody
+                                    selectionColor: LingmoUI.Theme.highlightColor
+                                    selectedTextColor: LingmoUI.Theme.highlightedTextColor
+                                    onLinkActivated: (link) => {
+                                        if (/^https?:\/\//.test(link))
+                                            Qt.openUrlExternally(link)
+                                    }
                                 }
                             }
 
@@ -296,15 +395,16 @@ LingmoUI.Window {
                                 Label {
                                     visible: row.stats.trim() !== ""
                                     text: row.stats
-                                    color: LingmoUI.Theme.disabledTextColor
-                                    font.pointSize: LingmoUI.Theme.fontSize * 0.85
+                                    color: LingmoUI.Theme.secondaryTextColor
+                                    font.pointSize: LingmoUI.Units.fontCaption
                                 }
                                 Label {
                                     id: copyLabel
                                     opacity: answerHover.hovered && row.stats !== "" ? 1 : 0
                                     text: copied.running ? qsTr("Copied") : qsTr("Copy")
                                     color: LingmoUI.Theme.linkColor
-                                    font.pointSize: LingmoUI.Theme.fontSize * 0.85
+                                    font.pointSize: LingmoUI.Units.fontCaption
+                                    Behavior on opacity { NumberAnimation { duration: LingmoUI.Units.shortDuration } }
                                     Timer { id: copied; interval: 1500 }
                                     TapHandler {
                                         onTapped: {
@@ -343,26 +443,27 @@ LingmoUI.Window {
                         Label {
                             wrapMode: Text.Wrap
                             text: row.text
-                            color: LingmoUI.Theme.disabledTextColor
-                            font.pointSize: LingmoUI.Theme.fontSize * 0.9
+                            color: LingmoUI.Theme.secondaryTextColor
+                            font.pointSize: LingmoUI.Units.fontCaption
                         }
                     }
                 }
             }
 
             // Errors from the engine or the model server
-            Label {
+            LingmoUI.Banner {
                 Layout.fillWidth: true
-                Layout.leftMargin: LingmoUI.Units.largeSpacing * 3
-                Layout.rightMargin: LingmoUI.Units.largeSpacing * 3
-                visible: assistant.error !== ""
+                Layout.leftMargin: LingmoUI.Units.largeSpacing * 2
+                Layout.rightMargin: LingmoUI.Units.largeSpacing * 2
+                Layout.topMargin: LingmoUI.Units.smallSpacing
+                type: LingmoUI.Banner.Error
+                // Cleared by the next question or conversation
+                closable: false
                 text: assistant.error
-                wrapMode: Text.Wrap
-                color: LingmoUI.Theme.redColor
             }
 
             // ------------------------------------------------ composer
-            Card {
+            LingmoUI.Card {
                 Layout.fillWidth: true
                 Layout.leftMargin: LingmoUI.Units.largeSpacing * 2
                 Layout.rightMargin: LingmoUI.Units.largeSpacing * 2
@@ -384,6 +485,7 @@ LingmoUI.Window {
                             id: input
                             placeholderText: assistant.busy ? qsTr("Answering… Esc stops") : qsTr("Ask the assistant…")
                             wrapMode: TextArea.Wrap
+                            font.pointSize: LingmoUI.Units.fontBody
                             background: Item {}
                             enabled: assistant.engineInstalled
                             focus: true
@@ -398,7 +500,7 @@ LingmoUI.Window {
                         }
                     }
 
-                    IconButton {
+                    LingmoUI.IconButton {
                         visible: assistant.busy
                         iconName: "media-playback-stop"
                         tipText: qsTr("Stop")
@@ -407,7 +509,7 @@ LingmoUI.Window {
                         onClicked: assistant.stop()
                     }
 
-                    ActionButton {
+                    LingmoUI.ActionButton {
                         id: sendButton
                         visible: !assistant.busy
                         primary: true
@@ -432,8 +534,8 @@ LingmoUI.Window {
                 Label {
                     Layout.fillWidth: true
                     elide: Text.ElideRight
-                    color: LingmoUI.Theme.disabledTextColor
-                    font.pointSize: LingmoUI.Theme.fontSize * 0.85
+                    color: LingmoUI.Theme.secondaryTextColor
+                    font.pointSize: LingmoUI.Units.fontCaption
                     text: assistant.model === "" ? qsTr("No AI model chosen")
                           : !assistant.toolsSupported ? qsTr("%1 · this model can't use tools: chat only").arg(assistant.model)
                           : assistant.writeAllowed ? qsTr("%1 · every change asks for your permission").arg(assistant.model)
@@ -443,7 +545,7 @@ LingmoUI.Window {
                 Label {
                     text: qsTr("AI settings")
                     color: LingmoUI.Theme.linkColor
-                    font.pointSize: LingmoUI.Theme.fontSize * 0.85
+                    font.pointSize: LingmoUI.Units.fontCaption
                     HoverHandler { cursorShape: Qt.PointingHandCursor }
                     TapHandler { onTapped: assistant.openSettings() }
                 }

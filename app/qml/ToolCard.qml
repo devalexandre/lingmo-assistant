@@ -4,7 +4,7 @@ import QtQuick.Layouts
 import LingmoUI.CompatibleModule 3.0 as LingmoUI
 
 // "Ran: lscpu" — collapsed by default, the tool's output when opened
-Card {
+LingmoUI.Card {
     id: card
 
     property string functionName
@@ -14,7 +14,7 @@ Card {
     property string output
     property bool expanded: false
 
-    hoverEnabled: output !== ""
+    clickable: output !== ""
     implicitHeight: column.implicitHeight + LingmoUI.Units.largeSpacing
 
     ColumnLayout {
@@ -33,18 +33,10 @@ Card {
             spacing: LingmoUI.Units.smallSpacing
 
             // Spinning while the tool runs
-            LingmoUI.IconItem {
+            LingmoUI.Spinner {
                 visible: card.running
-                Layout.preferredWidth: LingmoUI.Units.iconSizes.small
-                Layout.preferredHeight: LingmoUI.Units.iconSizes.small
-                source: "view-refresh"
-                RotationAnimator on rotation {
-                    running: card.running
-                    from: 0
-                    to: 360
-                    duration: 1000
-                    loops: Animation.Infinite
-                }
+                running: card.running
+                size: LingmoUI.Units.iconSizes.small
             }
 
             Rectangle {
@@ -54,7 +46,7 @@ Card {
                 Layout.leftMargin: 3
                 Layout.rightMargin: 3
                 radius: width / 2
-                color: card.ok ? LingmoUI.Theme.greenColor : LingmoUI.Theme.redColor
+                color: card.ok ? LingmoUI.Theme.successColor : LingmoUI.Theme.errorColor
             }
 
             Label {
@@ -62,7 +54,7 @@ Card {
                 text: assistant.toolLabel(card.functionName, card.args, card.running)
                 elide: Text.ElideMiddle
                 color: LingmoUI.Theme.textColor
-                font.pointSize: LingmoUI.Theme.fontSize * 0.95
+                font.pointSize: LingmoUI.Units.fontBody
             }
 
             LingmoUI.IconItem {
@@ -83,15 +75,12 @@ Card {
             textFormat: TextEdit.PlainText
             text: card.output
             font.family: "monospace"
-            font.pointSize: LingmoUI.Theme.fontSize * 0.85
-            color: card.ok ? LingmoUI.Theme.textColor : LingmoUI.Theme.redColor
+            font.pointSize: LingmoUI.Units.fontCaption
+            color: card.ok ? LingmoUI.Theme.textColor : LingmoUI.Theme.errorColor
             selectionColor: LingmoUI.Theme.highlightColor
             selectedTextColor: LingmoUI.Theme.highlightedTextColor
         }
     }
 
-    TapHandler {
-        enabled: card.output !== ""
-        onTapped: card.expanded = !card.expanded
-    }
+    onClicked: card.expanded = !card.expanded
 }

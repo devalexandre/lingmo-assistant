@@ -201,6 +201,18 @@
         <translation>Nova conversa</translation>
     </message>
     <message>
+        <source>History</source>
+        <translation>Histórico</translation>
+    </message>
+    <message>
+        <source>Delete conversation</source>
+        <translation>Apagar conversa</translation>
+    </message>
+    <message>
+        <source>Your conversations will appear here.</source>
+        <translation>Suas conversas aparecerão aqui.</translation>
+    </message>
+    <message>
         <source>How can I help?</source>
         <translation>Como posso ajudar?</translation>
     </message>
@@ -279,21 +291,6 @@
     <message>
         <source>AI settings</source>
         <translation>Configurações de IA</translation>
-    </message>
-</context>
-<context>
-    <name>SideBar</name>
-    <message>
-        <source>Delete conversation</source>
-        <translation>Apagar conversa</translation>
-    </message>
-    <message>
-        <source>New conversation</source>
-        <translation>Nova conversa</translation>
-    </message>
-    <message>
-        <source>History</source>
-        <translation>Histórico</translation>
     </message>
 </context>
 </TS>
