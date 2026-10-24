@@ -41,7 +41,19 @@ LingmoUI.Window {
         Item {
             id: sideBar
             Layout.fillHeight: true
-            implicitWidth: LingmoUI.Units.sideBarWidth
+            // The Chat / Workflows / Agents switch splits its width in three equal
+            // segments: make each one fit the longest label in any language
+            implicitWidth: Math.max(LingmoUI.Units.sideBarWidth,
+                                    Math.ceil(sectionLabel.advanceWidth + LingmoUI.Units.largeSpacing * 2) * 3
+                                    + LingmoUI.Units.largeSpacing * 2 + 6)
+
+            TextMetrics {
+                id: sectionLabel
+                font.family: LingmoUI.Theme.fontFamily
+                font.pointSize: LingmoUI.Units.fontBody
+                font.weight: Font.DemiBold
+                text: [qsTr("Chat"), qsTr("Workflows"), qsTr("Agents")].reduce((a, b) => a.length >= b.length ? a : b)
+            }
 
             Rectangle {
                 anchors.fill: parent
@@ -73,6 +85,7 @@ LingmoUI.Window {
                 }
 
                 LingmoUI.SegmentedControl {
+                    id: sectionSwitch
                     Layout.fillWidth: true
                     Layout.leftMargin: LingmoUI.Units.largeSpacing
                     Layout.rightMargin: LingmoUI.Units.largeSpacing

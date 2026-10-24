@@ -93,11 +93,14 @@ Item {
             return
         if (canvas.width < 200 || canvas.height < 200)
             return
-        const z = Math.max(0.5, Math.min(1.0, Math.min((canvas.width - 120) / b.width, (canvas.height - 200) / b.height)))
+        // Never shrink blocks below a readable size: a long flow that doesn't fit then
+        // starts at its first block (the minimap and panning show the rest)
+        const z = Math.max(0.8, Math.min(1.0, Math.min((canvas.width - 120) / b.width, (canvas.height - 200) / b.height)))
         fitting = true
         zoom = z
         fitting = false
-        panX = (canvas.width - b.width * z) / 2 - b.x * z
+        panX = b.width * z <= canvas.width - 120 ? (canvas.width - b.width * z) / 2 - b.x * z
+                                                  : 60 - b.x * z
         panY = (canvas.height - b.height * z) / 2 - b.y * z
     }
 
