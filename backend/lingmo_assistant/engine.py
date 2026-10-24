@@ -21,7 +21,8 @@ from . import PROTOCOL_VERSION, __version__, config, shell
 
 log = logging.getLogger("lingmo_assistant.engine")
 
-MAX_LINE = 1024 * 1024
+# ask_image carries the screen crop as base64 (up to 8 MiB decoded)
+MAX_LINE = 12 * 1024 * 1024
 MAX_MESSAGE = 32000
 OUTPUT_PREVIEW = 4000
 
@@ -72,7 +73,8 @@ class Pending:
 
 class Engine:
     def __init__(self, out: Output, db=None, load_config: Callable[[], config.Config] = config.load,
-                 model_factory=None, tools_supported: Optional[Callable[[str], Optional[bool]]] = None):
+                 model_factory=None, tools_supported: Optional[Callable[[str], Optional[bool]]] = None,
+                 vision_supported: Optional[Callable[[str], Optional[bool]]] = None):
         from . import agent as agent_mod, tools as tools_mod
         self.agent_mod = agent_mod
         self.tools_mod = tools_mod
@@ -80,6 +82,7 @@ class Engine:
         self.load_config = load_config
         self.model_factory = model_factory          # tests: cfg -> model
         self.tools_supported_fn = tools_supported or agent_mod.supports_tools
+        self.vision_supported_fn = vision_supported or agent_mod.supports_vision
         self.db = db if db is not None else agent_mod.database()
         self.ctx = tools_mod.ToolContext(load_config)
         self.ctx.summarizer = agent_mod.make_summarizer(
@@ -106,6 +109,8 @@ class Engine:
         if kind == "chat":
             self.chat(str(request.get("conversation_id") or ""), request.get("message"),
                       str(request.get("agent") or ""))
+        elif kind == "ask_image":
+            self.ask_image(request)
         elif kind in self.flows_protocol.TYPES:
             self.extra.handle(kind, request)
         elif kind == "confirm":
@@ -136,12 +141,90 @@ class Engine:
     def emit_config(self, kind: str = "config") -> None:
         cfg = self.cfg = self.load_config()
         supported = self.tools_supported_fn(cfg.model) if cfg.model else None
+        vision = self.vision_supported_fn(cfg.model) if cfg.model else None
         self.out.emit(kind, version=__version__, protocol=PROTOCOL_VERSION, provider=cfg.provider,
-                      model=cfg.model, think=cfg.think, tools_supported=supported,
+                      model=cfg.model, think=cfg.think, tools_supported=supported, vision=vision,
                       read=cfg.read, write=cfg.write, tools=cfg.enabled_tools(), busy=self.busy())
 
     def _valid_conversation(self, conv: str) -> bool:
         return 0 < len(conv) <= 100 and all(c.isalnum() or c in "-_" for c in conv)
+
+    def _check_message(self, conv: str, message) -> bool:
+        if not self._valid_conversation(conv):
+            self.out.emit("error", message="Conversa inválida.")
+            return False
+        if not isinstance(message, str) or not message.strip():
+            self.out.emit("error", conversation_id=conv, message="Mensagem vazia.")
+            return False
+        if len(message) > MAX_MESSAGE:
+            self.out.emit("error", conversation_id=conv, message="Mensagem longa demais.")
+            return False
+        if self.busy():
+            self.out.emit("error", conversation_id=conv, message="Aguarde a resposta atual terminar.")
+            return False
+        return True
+
+    def _agent_for(self, conv: str, agent_ref: str):
+        """(ok, agent definition or None) for a request's optional "agent"."""
+        if not agent_ref:
+            return True, self._conversation_agent(conv)
+        from . import agents
+        agent_def = agents.find(agent_ref)
+        if agent_def is None:
+            self.out.emit("error", conversation_id=conv, message="Agente não encontrado: %s" % agent_ref)
+            return False, None
+        self._remember_agent(conv, agent_def["id"])
+        return True, agent_def
+
+    def ask_image(self, request: dict) -> None:
+        """A question about an area of the screen (see screen.py)."""
+        from . import screen
+        conv = str(request.get("conversation_id") or "")
+        message = request.get("message")
+        if not self._check_message(conv, message):
+            return
+        try:
+            req = screen.parse(request)
+        except screen.ScreenError as exc:
+            self.out.emit("error", conversation_id=conv, message=str(exc))
+            return
+        ok, agent_def = self._agent_for(conv, str(request.get("agent") or ""))
+        if not ok:
+            return
+        self._start(lambda: self._ask_image(conv, message.strip(), req, agent_def))
+
+    def _ask_image(self, conv: str, message: str, req, agent_def=None) -> None:
+        from . import agents, screen
+        model_name = agents.effective_config(self.load_config(), agent_def).model
+        if not model_name:
+            self.out.emit("error", conversation_id=conv,
+                          message="Nenhum modelo de IA escolhido. Escolha um em Configurações › IA.")
+            return
+        vision = bool(req.image) and self.vision_supported_fn(model_name) is True
+        if not vision and not req.ocr_text:
+            self.out.emit("error", conversation_id=conv, message=screen.no_vision_message(model_name))
+            return
+        # A direct answer: no reasoning for screen questions, whatever ai.conf says
+        setup = self._setup(conv, agent_def, think=False, extra_context=screen.context(req, vision),
+                            exclude_functions=screen.EXCLUDED_FUNCTIONS)
+        if setup is None:
+            return
+        cfg, agent, model = setup
+        self.out.emit("image_mode", conversation_id=conv, mode="vision" if vision else "ocr", model=cfg.model,
+                      ocr_chars=len(req.ocr_text))
+        self.out.emit("started", conversation_id=conv)
+        clock = _Clock()
+        images = None
+        if vision:
+            from agno.media import Image
+            images = [Image(content=req.image, mime_type=req.mime, format=req.mime.split("/")[-1])]
+        try:
+            stream = agent.run(message, session_id=conv, stream=True, stream_events=True, images=images,
+                               metadata={"screen": True, "screen_mode": "vision" if vision else "ocr"})
+            self._drive(conv, agent, model, cfg, stream, clock,
+                        before_done=lambda: self._name_conversation(conv, message, screen.title(message)))
+        except Exception as exc:
+            self._fail(conv, cfg, exc)
 
     def chat(self, conv: str, message, agent_ref: str = "") -> None:
         if not self._valid_conversation(conv):
@@ -244,10 +327,14 @@ class Engine:
         aid = self._load_conv_agents().get(conv)
         return agents.find(aid) if aid else None
 
-    def _setup(self, conv: str, agent_def=None):
+    def _setup(self, conv: str, agent_def=None, think: Optional[bool] = None, extra_context: str = "",
+               exclude_functions: frozenset = frozenset()):
         from . import agents
+        import dataclasses
         base = self.load_config()
         cfg = agents.effective_config(base, agent_def)
+        if think is not None:
+            cfg = dataclasses.replace(cfg, think=think)
         self.cfg = base
         if cfg.provider != "ollama":
             self.out.emit("error", conversation_id=conv,
@@ -266,7 +353,8 @@ class Engine:
                                   "Escolha um modelo com ferramentas em Configurações › IA." % cfg.model)
         model = self.model_factory(cfg) if self.model_factory else self.agent_mod.make_model(
             cfg, agent_def.get("temperature") if agent_def else None)
-        agent = self.agent_mod.build_agent(cfg, self.ctx, self.db, tools_on, model=model, agent_def=agent_def)
+        agent = self.agent_mod.build_agent(cfg, self.ctx, self.db, tools_on, model=model, agent_def=agent_def,
+                                           extra_context=extra_context, exclude_functions=exclude_functions)
         return cfg, agent, model
 
     def _chat(self, conv: str, message: str, agent_def=None) -> None:
@@ -445,7 +533,7 @@ class Engine:
                 return run
         return None
 
-    def _name_conversation(self, conv: str, message: str) -> None:
+    def _name_conversation(self, conv: str, message: str, title: str = "") -> None:
         from agno.db.base import SessionType
         session = self._session(conv)
         if session is None:
@@ -453,8 +541,9 @@ class Engine:
         data = session.session_data or {}
         if data.get("session_name"):
             return
-        title = " ".join(message.split())
-        title = title if len(title) <= 60 else title[:57].rstrip() + "…"
+        if not title:
+            title = " ".join(message.split())
+            title = title if len(title) <= 60 else title[:57].rstrip() + "…"
         try:
             self.db.rename_session(session_id=conv, session_type=SessionType.AGENT, session_name=title)
         except Exception as exc:
@@ -493,7 +582,12 @@ class Engine:
                     continue
                 text = run.input.input_content if run.input else ""
                 if isinstance(text, str) and text:
-                    messages.append({"role": "user", "text": text})
+                    item = {"role": "user", "text": text}
+                    meta = getattr(run, "metadata", None) or {}
+                    if meta.get("screen"):
+                        # asked about an area of the screen (the picture itself isn't stored)
+                        item["screen"] = str(meta.get("screen_mode") or "ocr")
+                    messages.append(item)
                 tools = []
                 for t in run.tools or []:
                     fn = t.tool_name or ""

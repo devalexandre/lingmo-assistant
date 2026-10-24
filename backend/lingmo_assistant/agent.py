@@ -80,7 +80,23 @@ def make_model(cfg: config.Config, temperature: Optional[float] = None) -> Lingm
 
 
 _caps_cache: dict[str, Optional[bool]] = {}
+_vision_cache: dict[str, bool] = {}
 _caps_lock = threading.Lock()
+
+
+def _capabilities(model: str) -> Optional[list]:
+    """Ollama's capabilities of an installed model ("tools", "vision"...), None
+    when Ollama can't be asked."""
+    try:
+        from ollama import Client
+        info = Client(host=ollama_host(), timeout=10).show(model)
+        caps = getattr(info, "capabilities", None)
+        if caps is None and isinstance(info, dict):
+            caps = info.get("capabilities")
+        return list(caps or [])
+    except Exception as exc:  # not running, model missing...
+        log.info("capabilities unavailable: %s", type(exc).__name__)
+        return None
 
 
 def supports_tools(model: str) -> Optional[bool]:
@@ -90,24 +106,35 @@ def supports_tools(model: str) -> Optional[bool]:
     with _caps_lock:
         if model in _caps_cache:
             return _caps_cache[model]
-    try:
-        from ollama import Client
-        info = Client(host=ollama_host(), timeout=10).show(model)
-        caps = getattr(info, "capabilities", None)
-        if caps is None and isinstance(info, dict):
-            caps = info.get("capabilities")
-        result = "tools" in (caps or [])
-    except Exception as exc:  # not running, model missing...
-        log.info("capabilities unavailable: %s", type(exc).__name__)
+    caps = _capabilities(model)
+    if caps is None:
         return None
     with _caps_lock:
-        _caps_cache[model] = result
-    return result
+        _caps_cache[model] = "tools" in caps
+        _vision_cache[model] = "vision" in caps
+    return "tools" in caps
+
+
+def supports_vision(model: str) -> Optional[bool]:
+    """The model reads images (Ollama capability "vision"); None when unknown."""
+    if not model:
+        return None
+    with _caps_lock:
+        if model in _vision_cache:
+            return _vision_cache[model]
+    caps = _capabilities(model)
+    if caps is None:
+        return None
+    with _caps_lock:
+        _vision_cache[model] = "vision" in caps
+        _caps_cache.setdefault(model, "tools" in caps)
+    return "vision" in caps
 
 
 def forget_capabilities() -> None:
     with _caps_lock:
         _caps_cache.clear()
+        _vision_cache.clear()
 
 
 TOOL_LABELS = {
@@ -218,12 +245,17 @@ def knowledge_tool(ctx: tools.ToolContext, agent_def: dict):
 
 
 def build_agent(cfg: config.Config, ctx: tools.ToolContext, db, tools_supported: bool,
-                model=None, agent_def: Optional[dict] = None) -> Agent:
+                model=None, agent_def: Optional[dict] = None, extra_context: str = "",
+                exclude_functions: frozenset = frozenset()) -> Agent:
+    """extra_context goes after the system prompt (e.g. what the user selected
+    on the screen for ask_image)."""
     from . import paths as _paths
     model = model or make_model(cfg, agent_def.get("temperature") if agent_def else None)
     policy = _paths.PathPolicy(cfg.folders)
     folders = [tools.short_path(r) for r in policy.roots]
     functions = ctx.functions(cfg) if tools_supported else []
+    if exclude_functions:
+        functions = [f for f in functions if getattr(f, "name", getattr(f, "__name__", "")) not in exclude_functions]
     if tools_supported and agent_def and agent_def.get("knowledge") and ctx.load_config().tool_enabled("read_files"):
         functions.append(knowledge_tool(ctx, agent_def))
     return Agent(
@@ -231,12 +263,15 @@ def build_agent(cfg: config.Config, ctx: tools.ToolContext, db, tools_supported:
         model=model,
         tools=functions,
         db=db,
-        system_message=system_prompt(cfg, tools_supported, folders, agent_def),
+        system_message=system_prompt(cfg, tools_supported, folders, agent_def)
+        + ("\n\n" + extra_context if extra_context else ""),
         add_history_to_context=True,
         num_history_runs=HISTORY_RUNS,
         tool_call_limit=TOOL_CALL_LIMIT,
         markdown=True,
         telemetry=False,
+        # Pictures of the screen (ask_image) are never written to the history database
+        store_media=False,
     )
 
 

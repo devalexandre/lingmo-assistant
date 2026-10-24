@@ -191,7 +191,66 @@ ColumnLayout {
                                : row.kind === "assistant" ? answerBubble
                                : row.kind === "tool" ? toolCard
                                : row.kind === "confirm" ? confirmCard
+                               : row.kind === "screen" ? screenCard
                                : noticeRow
+            }
+
+            // "Ask about the screen": the area the conversation is about
+            Component {
+                id: screenCard
+                Item {
+                    implicitHeight: screenFrame.height
+                    Rectangle {
+                        id: screenFrame
+                        anchors.right: parent.right
+                        // Fixed with a picture (its height follows the width), else the label's
+                        width: Math.min(parent.width * 0.8, shot.visible ? 420
+                                                                         : screenLabel.implicitWidth + LingmoUI.Units.largeSpacing * 2)
+                        height: screenColumn.implicitHeight + LingmoUI.Units.largeSpacing * 1.4
+                        radius: LingmoUI.Theme.bigRadius
+                        color: LingmoUI.Theme.secondBackgroundColor
+                        border.width: 1
+                        border.color: LingmoUI.Theme.borderColor
+
+                        ColumnLayout {
+                            id: screenColumn
+                            anchors.centerIn: parent
+                            width: parent.width - LingmoUI.Units.largeSpacing * 2
+                            spacing: LingmoUI.Units.smallSpacing
+
+                            Image {
+                                id: shot
+                                visible: row.title !== ""
+                                source: row.title
+                                asynchronous: true
+                                fillMode: Image.PreserveAspectFit
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: status === Image.Ready && implicitWidth > 0
+                                                        ? Math.min(260, implicitHeight * Math.min(1, width / implicitWidth)) : 0
+                                sourceSize.width: 900
+                                smooth: true
+                            }
+                            RowLayout {
+                                spacing: LingmoUI.Units.smallSpacing
+                                Layout.fillWidth: true
+                                LingmoUI.IconItem {
+                                    Layout.preferredWidth: 14
+                                    Layout.preferredHeight: 14
+                                    source: "object-locked"
+                                    color: LingmoUI.Theme.secondaryTextColor
+                                }
+                                Label {
+                                    id: screenLabel
+                                    Layout.fillWidth: true
+                                    text: row.details !== "" ? qsTr("%1 · %2").arg(row.text).arg(row.details) : row.text
+                                    color: LingmoUI.Theme.secondaryTextColor
+                                    font.pointSize: LingmoUI.Units.fontCaption
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             Component {

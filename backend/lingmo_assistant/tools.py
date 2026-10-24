@@ -149,6 +149,11 @@ class ToolContext:
 
     def preview(self, function: str, args: dict) -> Preview:
         """Exact description of a pending write; raises a KNOWN_ERRORS on invalid input."""
+        from . import intents
+        if function.startswith(intents.PREFIX):
+            # Lingmo Intents: the app's own action, checked by the same gate as the app
+            tool_id, title, details = intents.preview(function, args)
+            return Preview(tool_id, function, title, details)
         tool_id = FUNCTION_TOOL.get(function)
         if function not in WRITE_FUNCTIONS:
             raise paths.PolicyError("Ferramenta de escrita desconhecida.")
@@ -718,6 +723,12 @@ class ToolContext:
                 return ctx.run("write_file", body)
             out.append(write_file)
 
+        # Lingmo Intents: every installed app action the settings allow, generated
+        # from the manifests; they replace the hand-written tools they cover
+        from . import intents
+        replaced = intents.replaced_functions()
+        out = [f for f in out if f.name not in replaced]
+        out += intents.functions(ctx, cfg)
         return out
 
 
@@ -872,6 +883,9 @@ def _search(policy: paths.PathPolicy, query: str, in_content: bool, folder: str)
 def args_summary(function: str, args: dict) -> str:
     """Short, human text of what a tool call is about (shown in the UI)."""
     args = args or {}
+    from . import intents
+    if function.startswith(intents.PREFIX):
+        return intents.args_summary(function, args)
     key = {
         "run_command": "command", "list_folder": "path", "read_document": "path",
         "search_files": "query", "list_notes": "query", "read_note": "page_id",

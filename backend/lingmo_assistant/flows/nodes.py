@@ -67,6 +67,9 @@ class NodeType:
     def has_input(self) -> bool:
         return self.category != TRIGGER
 
+    hidden: bool = False        # kept for old workflows, not offered in the palette
+    intent: str = ""            # Lingmo Intents id (type "intent.<id>")
+
     def to_dict(self) -> dict:
         cap = None
         if self.capability:
@@ -76,7 +79,8 @@ class NodeType:
                 "description": self.description, "icon": self.icon,
                 "params": [p.to_dict() for p in self.params], "ports": self.ports,
                 "port_labels": {p: PORT_LABELS.get(p, p) for p in self.ports},
-                "input": self.has_input, "outputs": self.outputs, "capability": cap}
+                "input": self.has_input, "outputs": self.outputs, "capability": cap,
+                "hidden": self.hidden, "intent": self.intent}
 
 
 PORT_LABELS = {"out": "", "true": "Sim", "false": "Não", "each": "Para cada", "done": "Depois",
@@ -288,12 +292,15 @@ FORBIDDEN_WORDS = ("delete", "remove", "trash", "erase", "expunge", "wipe", "apa
 
 
 def get(type_: str) -> Optional[NodeType]:
-    return BY_TYPE.get(type_)
+    nt = BY_TYPE.get(type_)
+    if nt is None and type_.startswith(INTENT_PREFIX):
+        return intent_type(type_[len(INTENT_PREFIX):])
+    return nt
 
 
 def ports_for(node: dict) -> list[str]:
     """Output ports of a node; a switch has one port per case."""
-    nt = BY_TYPE.get(node.get("type", ""))
+    nt = get(node.get("type", ""))
     if nt is None:
         return []
     if nt.type == "logic.switch":
@@ -305,7 +312,7 @@ def ports_for(node: dict) -> list[str]:
 
 
 def outputs_for(node: dict) -> list[str]:
-    nt = BY_TYPE.get(node.get("type", ""))
+    nt = get(node.get("type", ""))
     if nt is None:
         return []
     outs = list(nt.outputs)
@@ -316,4 +323,78 @@ def outputs_for(node: dict) -> list[str]:
 
 
 def catalogue() -> dict:
-    return {"categories": CATEGORIES, "types": [t.to_dict() for t in TYPES]}
+    installed = {nt.intent for nt in intent_types()}
+    types = []
+    for t in TYPES:
+        d = t.to_dict()
+        if LEGACY_EQUIVALENT.get(t.type) in installed:
+            d["hidden"] = True      # the app's own action replaces it in the palette
+        types.append(d)
+    types += [nt.to_dict() for nt in intent_types()]
+    return {"categories": CATEGORIES, "types": types}
+
+
+# ------------------------------------------------------------ Lingmo Intents
+# Every action an installed app declares (lingmo-intents manifests) is a block
+# "intent.<id>": its form comes from the parameter schema, its outputs are
+# {{node.result.<field>}} from the result schema, and it runs through D-Bus as
+# caller "flows". The app applies the same gate again.
+
+INTENT_PREFIX = "intent."
+
+# Built-in blocks that do the same as an app action: hidden from the palette
+# when that action is installed (workflows that use them keep working)
+LEGACY_EQUIVALENT = {
+    "action.clock.alarm": "clock.alarm.create", "action.clock.timer": "clock.timer.start",
+    "action.mail.send": "mail.send", "action.calendar.event": "calendar.event.create",
+    "action.calendar.task": "tasks.create", "action.contacts.add": "contacts.create",
+    "action.mail.attachments": "mail.saveAttachments", "action.system.notify": "notify.show",
+    "action.system.screenshot": "screenshot.capture",
+}
+
+_PLACEHOLDERS = {"date": "2026-10-25", "date-time": "2026-10-25T14:00", "email": "alguem@exemplo.com",
+                 "email-list": "alguem@exemplo.com, outra@exemplo.com", "uri": "https://…", "time": "07:00"}
+
+
+def _intent_param(intent, name: str, prop: dict) -> Param:
+    from .. import intents as bridge
+    t = prop.get("type", "string")
+    fmt = prop.get("format", "")
+    label = intent.param_title(name, "pt_BR")
+    help_text = bridge.li.localized(prop.get("description"), "pt_BR") if prop.get("description") else ""
+    default = prop.get("default", [] if t == "array" else "")
+    required = name in intent.required
+    if "enum" in prop:
+        return Param(name, label, "select", default if default != "" else prop["enum"][0], required,
+                     options=[{"value": v, "label": str(v)} for v in prop["enum"]], help=help_text, template=False)
+    if t == "boolean":
+        return Param(name, label, "bool", bool(default) if default != "" else False, required, help=help_text,
+                     template=False)
+    if t in ("integer", "number"):
+        return Param(name, label, "number", default, required, help=help_text)
+    if t == "array":
+        return Param(name, label, "list", default or [], required, help=help_text)
+    kind = {"time": "time", "folder": "folder", "file": "path"}.get(fmt, "textarea" if prop.get("x-multiline") else "text")
+    return Param(name, label, kind, default, required, placeholder=_PLACEHOLDERS.get(fmt, ""), help=help_text)
+
+
+def _intent_node(intent) -> NodeType:
+    outputs = ["output", "result"] + ["result.%s" % k for k in ((intent.result or {}).get("properties") or {})]
+    tools = (intent.assistant_tool,) if intent.assistant_tool else ()
+    verb = "%s (%s)" % (intent.title_text("pt_BR")[:1].lower() + intent.title_text("pt_BR")[1:],
+                        intent.app_name_text("pt_BR"))
+    cap = Capability(tools, verb, writes=not intent.read_only, external="send" in intent.capabilities)
+    return NodeType(INTENT_PREFIX + intent.id, ACTION, intent.title_text("pt_BR"), intent.description_text("pt_BR"),
+                    intent.icon or "system-run", [_intent_param(intent, n, p) for n, p in intent.properties.items()],
+                    outputs=outputs, capability=cap, group=intent.app_name_text("pt_BR"), intent=intent.id)
+
+
+def intent_type(intent_id: str) -> Optional[NodeType]:
+    from .. import intents as bridge
+    intent = bridge.get(intent_id)
+    return _intent_node(intent) if intent is not None else None
+
+
+def intent_types() -> list[NodeType]:
+    from .. import intents as bridge
+    return [_intent_node(i) for i in bridge.all_intents()]

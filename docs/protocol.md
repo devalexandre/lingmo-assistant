@@ -30,6 +30,7 @@ optional `agent` field of `chat`; version-1 clients keep working.
 | type | fields | meaning |
 |---|---|---|
 | `chat` | `conversation_id`, `message`, optional `agent` | Ask something. `conversation_id` is chosen by the client: 1–100 chars of `[A-Za-z0-9_-]` (a UUID is fine). History is kept per conversation. `agent` (an agent id, or a name as typed after `@`, e.g. `secretaria`) answers with that custom agent; it stays the agent of the conversation. |
+| `ask_image` | `conversation_id`, `message`, `image` (base64 PNG/JPEG, ≤ 8 MiB decoded, optional), `ocr_text` (optional), `source` (`{window, app, width, height}`, optional), optional `agent` | A question about an area of the screen (lingmo-screenshot's "Perguntar sobre a tela"). See "Questions about the screen" below. |
 | `confirm` | `request_id`, `allow` (bool) | Answer a `confirmation_required`. |
 | `stop` | — | Stop the current answer. A pending confirmation is left unanswered (the run stays paused in the database). |
 | `reload_config` | — | Re-read `ai.conf` and the model's capabilities; answered with `config`. (The engine also re-reads `ai.conf` for every message and every tool call.) |
@@ -42,7 +43,8 @@ optional `agent` field of `chat`; version-1 clients keep working.
 
 | type | fields |
 |---|---|
-| `ready` / `config` | `version`, `protocol` (1), `provider`, `model`, `think`, `tools_supported` (true/false, or null when Ollama can't be asked), `read`, `write`, `tools` (enabled contract tool ids), `busy` |
+| `ready` / `config` | `version`, `protocol` (1), `provider`, `model`, `think`, `tools_supported` (true/false, or null when Ollama can't be asked), `vision` (the model reads images: true/false, or null), `read`, `write`, `tools` (enabled contract tool ids), `busy` |
+| `image_mode` | `conversation_id`, `mode` (`vision` \| `ocr`), `model`, `ocr_chars` — sent before `started` for an `ask_image` |
 | `started` | `conversation_id` — an answer (or a resumed run) began |
 | `token` | `conversation_id`, `text` — a piece of the Markdown answer |
 | `thinking` | `conversation_id`, `text` — a piece of the model's reasoning (show "Pensando…", not the text) |
@@ -54,7 +56,7 @@ optional `agent` field of `chat`; version-1 clients keep working.
 | `done` | `conversation_id`, `stopped` (bool), `stats`: `{seconds, tokens_per_s, tokens, model}` — `seconds` excludes the time spent waiting for the user |
 | `error` | `message`, optional `conversation_id` |
 | `conversations` | `items`: `[{id, title, updated (unix time)}]`, newest first |
-| `history` | `conversation_id`, `title`, `agent` (id or ""), `messages`: `[{role: "user", text} \| {role: "assistant", text, tools: [{tool, function, args_summary, ok, summary, output}]}]`, `pending`: `[{request_id, tool, function, title, details}]` |
+| `history` | `conversation_id`, `title`, `agent` (id or ""), `messages`: `[{role: "user", text, screen?} \| {role: "assistant", text, tools: [{tool, function, args_summary, ok, summary, output}]}]` (`screen`: `vision` or `ocr` on questions sent with `ask_image`), `pending`: `[{request_id, tool, function, title, details}]` |
 | `deleted` | `conversation_id` |
 
 A normal answer: `started`, then any mix of `thinking`, `token`, `tool_start`/`tool_end`,
@@ -73,6 +75,37 @@ A normal answer: `started`, then any mix of `thinking`, `token`, `tool_start`/`t
 ← …
 ← {"type":"done","conversation_id":"5f0c…","stopped":false,"stats":{"seconds":4.9,"tokens_per_s":65.2,"tokens":77,"model":"qwen3.5:4b"}}
 ```
+
+## Questions about the screen (`ask_image`)
+
+lingmo-screenshot (`lingmo-screenshot ask`, Meta+S) runs its own engine and sends
+the selected area as `ask_image`: the crop (scaled to at most 1280 px, PNG or
+JPEG) in base64, the text tesseract read from it and the window title. The
+engine answers like `chat` (same ai.conf model, agents, tool gate, confirmations
+and history) with these differences:
+
+- **Vision or text.** When the model has Ollama's `vision` capability (see
+  `config.vision`) it gets the picture in the message's `images` and the OCR text
+  as a hint; otherwise it gets the OCR text only (and is told it can't see the
+  picture). No picture and no OCR text with a text-only model is an `error`
+  suggesting a vision model (`qwen2.5vl:3b`, `gemma3:4b`). `image_mode` says
+  which way was taken.
+- **Direct answers.** Reasoning is off (`think: false`) whatever ai.conf says.
+- **Context.** The OCR text and the window title go to the system prompt for
+  this run, between untrusted-content markers; the user message stays the
+  question, so the history reads naturally. The run is marked
+  (`metadata.screen`), and `history` returns `screen` on those questions.
+- **Privacy.** The picture is never written to the history database (agno
+  `store_media=False`); follow-up questions must send it again. Lines may be up
+  to 12 MiB for this request.
+- **No recursion.** The `screen.ask` intent (open the selection overlay) is not
+  offered as a tool during a screen question.
+
+"Continuar no Assistente" hands the conversation over: lingmo-screenshot calls
+`com.lingmo.Assistant /Assistant continueWithImage(s conversationId, ay image,
+s ocrText, s window)`. The app keeps the picture in memory only, shows it in the
+chat (`image://screen/<id>`) and sends the follow-up questions of that
+conversation as `ask_image`.
 
 ## Confirmation and handoff
 
@@ -110,6 +143,29 @@ that `request_id` resumes the stored run there.
 | `files_write` | `write_file` (modes `create`, `append`, `overwrite`) |
 
 Nothing deletes, renames or moves anything.
+
+### App actions (Lingmo Intents)
+
+Every action an installed app declares (`/usr/share/lingmo/intents/*.json`,
+see `docs/intents.md` in the workspace) is also a tool, generated at run time:
+function `intent_<id>` (dots become `_`, e.g. `intent_clock_alarm_create`),
+`tool` = the manifest's `assistantTool` (e.g. `alarms_write`) or `intents`.
+`args_summary` is "App › summary" ("Relógio › Criar alarme às 07:00"). Only
+the intents allowed by the gate are offered (read/write switches, the tool
+checkbox, `intents_disabled_apps` / `intents_disabled`); every one that is not
+read-only uses `confirmation_required` (`title` "Relógio › Criar alarme",
+`details` the exact values). After "Permitir" the engine calls the app over
+D-Bus with `{"caller": "assistant", "confirmed": true}`; the app checks
+everything again. Results of read-only intents reach the model as untrusted
+content. When an intent covers a hand-written tool, that tool is left out
+(`create_alarm`, `start_timer`, `send_email`, `reply_email`, `list_emails`,
+`read_email`, `create_note`, `append_to_note`, `create_event`, `create_task`).
+
+In `flow_catalogue`, intents are node types `intent.<id>` (category `actions`,
+`group` = the app's name, `intent` = the id, params generated from the schema,
+outputs `output`, `result` and `result.<field>`); built-in types that do the
+same are sent with `hidden: true` (kept for saved workflows, left out of the
+palette).
 
 
 ## Protocol 2: agents, workflows, voice

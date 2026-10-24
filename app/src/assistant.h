@@ -215,6 +215,12 @@ public Q_SLOTS:
     void open(const QString &conversationId);
     // D-Bus: start a new conversation with this question
     void ask(const QString &text);
+    // D-Bus: "Ask about the screen" (lingmo-screenshot) hands its conversation
+    // over with the picture of the area (PNG/JPEG bytes, kept in memory only),
+    // the text read from it and the window it came from. Follow-up questions
+    // of that conversation send the picture again (ask_image).
+    void continueWithImage(const QString &conversationId, const QByteArray &image, const QString &ocrText,
+                           const QString &window);
     // D-Bus: push-to-talk (the global shortcut); a second call stops listening
     void voice();
     // D-Bus: show a section (chat, flows, agents, settings)
@@ -259,6 +265,14 @@ private:
     void writeAiSetting(const QString &key, const QVariant &value);
     QVariant aiSetting(const QString &key, const QVariant &fallback) const;
     void loadHistory(const QVariantMap &event);
+    struct ScreenContext {
+        QByteArray image;    // as received (PNG or JPEG)
+        QSize size;
+        QString ocrText;
+        QString window;
+        int serial = 0;
+    };
+    QHash<QString, ScreenContext> m_screens;   // conversation -> picture of the screen
     void setBusy(bool busy);
     void setError(const QString &error);
     QString statsText(const QVariantMap &stats) const;

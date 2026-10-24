@@ -31,21 +31,25 @@ Item {
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar {}
             model: { assistant.flow.catalogue; return assistant.flow.palette(blockPalette.filter) }
-            section.property: "category"
+            // "actions|Relógio": the actions are grouped by app (Lingmo Intents)
+            section.property: "section"
             section.delegate: Label {
                 required property string section
+                readonly property string category: section.split("|")[0]
+                readonly property string app: section.indexOf("|") >= 0 ? section.slice(section.indexOf("|") + 1) : ""
                 width: ListView.view.width
                 topPadding: LingmoUI.Units.largeSpacing
                 bottomPadding: 4
                 text: {
+                    let label = category
                     for (const c of assistant.categories)
-                        if (c.id === section)
-                            return c.label
-                    return section
+                        if (c.id === category)
+                            label = c.label
+                    return app !== "" ? label + " · " + app : label
                 }
                 font.pointSize: LingmoUI.Units.fontCaption
                 font.weight: Font.DemiBold
-                color: Ui.color(section)
+                color: Ui.color(category)
             }
 
             delegate: Rectangle {
@@ -79,9 +83,11 @@ Item {
                             font.pointSize: LingmoUI.Units.fontBody
                         }
                         Label {
+                            // grouped by app already (section): show what it does instead
+                            readonly property bool byApp: (item.modelData.section || "").indexOf("|") >= 0
                             Layout.fillWidth: true
-                            visible: item.modelData.group !== ""
-                            text: item.modelData.group
+                            visible: text !== ""
+                            text: byApp ? item.modelData.description : item.modelData.group
                             elide: Text.ElideRight
                             color: LingmoUI.Theme.secondaryTextColor
                             font.pointSize: LingmoUI.Units.fontCaption

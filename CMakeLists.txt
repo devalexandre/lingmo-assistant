@@ -23,6 +23,7 @@ add_executable(lingmo-assistant
     app/src/engineclient.cpp
     app/src/flowdocument.cpp
     app/src/assistant_extra.cpp
+    app/src/screenimages.cpp
     app/qml.qrc
 )
 target_compile_definitions(lingmo-assistant PRIVATE

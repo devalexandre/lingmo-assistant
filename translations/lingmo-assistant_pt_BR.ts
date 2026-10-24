@@ -403,6 +403,14 @@
         <translation>O assistente pede permissão na janela.</translation>
     </message>
     <message>
+        <source>Area of the screen</source>
+        <translation>Área da tela</translation>
+    </message>
+    <message>
+        <source>Question about an area of the screen (the picture is not kept)</source>
+        <translation>Pergunta sobre uma área da tela (a imagem não é guardada)</translation>
+    </message>
+    <message>
         <source>New workflow</source>
         <translation>Novo fluxo</translation>
     </message>
@@ -566,6 +574,14 @@
         <source>I didn&apos;t hear anything.</source>
         <translation>Não ouvi nada.</translation>
     </message>
+    <message>
+        <source>App action: %1…</source>
+        <translation>Ação do app: %1…</translation>
+    </message>
+    <message>
+        <source>App action: %1</source>
+        <translation>Ação do app: %1</translation>
+    </message>
 </context>
 <context>
     <name>ChatPage</name>
@@ -604,6 +620,10 @@
     <message>
         <source>Remind me tomorrow at 9 to </source>
         <translation>Me lembre amanhã às 9h de </translation>
+    </message>
+    <message>
+        <source>%1 · %2</source>
+        <translation>%1 · %2</translation>
     </message>
     <message>
         <source>Reasoning… %1 s</source>

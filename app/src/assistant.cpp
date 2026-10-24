@@ -8,10 +8,12 @@
  */
 
 #include "assistant.h"
+#include "screenimages.h"
 
 #include <QClipboard>
 #include <QDateTime>
 #include <QGuiApplication>
+#include <QImage>
 #include <QJsonObject>
 #include <QLocale>
 #include <QProcess>
@@ -175,6 +177,17 @@ void Assistant::send(const QString &text)
     QJsonObject request{{QStringLiteral("type"), QStringLiteral("chat")},
                         {QStringLiteral("conversation_id"), m_conversationId},
                         {QStringLiteral("message"), question}};
+    const auto screen = m_screens.constFind(m_conversationId);
+    if (screen != m_screens.cend()) {
+        // A conversation about an area of the screen: the picture goes again
+        // (the engine never stores it), see docs/protocol.md "ask_image"
+        request.insert(QStringLiteral("type"), QStringLiteral("ask_image"));
+        request.insert(QStringLiteral("image"), QString::fromLatin1(screen->image.toBase64()));
+        request.insert(QStringLiteral("ocr_text"), screen->ocrText);
+        request.insert(QStringLiteral("source"), QJsonObject{{QStringLiteral("window"), screen->window},
+                                                             {QStringLiteral("width"), screen->size.width()},
+                                                             {QStringLiteral("height"), screen->size.height()}});
+    }
     if (!m_chatAgent.isEmpty())
         request.insert(QStringLiteral("agent"), m_chatAgent);
     m_engine.send(request);
@@ -235,6 +248,38 @@ void Assistant::ask(const QString &text)
     send(text);
 }
 
+void Assistant::continueWithImage(const QString &conversationId, const QByteArray &image, const QString &ocrText,
+                                  const QString &window)
+{
+    if (!validId(conversationId))
+        return;
+    ScreenContext context;
+    if (image.size() <= 8 * 1024 * 1024) {
+        const QImage decoded = QImage::fromData(image);
+        if (!decoded.isNull()) {
+            context.image = image;
+            context.size = decoded.size();
+            ScreenImages::set(conversationId, decoded);
+        }
+    }
+    context.ocrText = ocrText.left(20000);
+    context.window = window.left(300);
+    static int serial = 0;
+    context.serial = ++serial;
+    if (context.image.isEmpty() && context.ocrText.trimmed().isEmpty())
+        return open(conversationId);
+    // A few at a time: the pictures only live in memory
+    if (m_screens.size() >= 8 && !m_screens.contains(conversationId)) {
+        const QString oldest = m_screens.keys().constFirst();
+        m_screens.remove(oldest);
+        ScreenImages::set(oldest, QImage());
+    }
+    m_screens.insert(conversationId, context);
+    if (m_section != QLatin1String("chat"))
+        setSection(QStringLiteral("chat"));
+    open(conversationId);
+}
+
 QString Assistant::statsText(const QVariantMap &stats) const
 {
     const QString seconds = QLocale().toString(stats.value(QStringLiteral("seconds")).toDouble(), 'f', 1);
@@ -281,6 +326,9 @@ QString Assistant::toolLabel(const QString &function, const QString &args, bool 
         return running ? tr("Creating task “%1”…").arg(args) : tr("Task “%1”").arg(args);
     if (function == QLatin1String("write_file"))
         return running ? tr("Writing %1…").arg(args) : tr("File %1").arg(args);
+    // Lingmo Intents: args is the action's summary ("Relógio › Criar alarme às 07:00")
+    if (function.startsWith(QLatin1String("intent_")) && !args.isEmpty())
+        return running ? tr("App action: %1…").arg(args) : tr("App action: %1").arg(args);
     return running ? tr("Working…") : function;
 }
 
@@ -419,10 +467,36 @@ void Assistant::onEvent(const QVariantMap &event)
 void Assistant::loadHistory(const QVariantMap &event)
 {
     m_messages.clear();
-    for (const QVariant &v : event.value(QStringLiteral("messages")).toList()) {
+    const QString conv = event.value(QStringLiteral("conversation_id")).toString();
+    const QVariantList history = event.value(QStringLiteral("messages")).toList();
+    const auto screen = m_screens.constFind(conv);
+    bool screenShown = false;
+    // The picture of the screen, before the first question about it
+    auto showScreen = [&] {
+        if (screenShown)
+            return;
+        screenShown = true;
+        ChatModel::Item item;
+        item.kind = QStringLiteral("screen");
+        if (screen != m_screens.cend() && !screen->image.isEmpty()) {
+            item.title = QStringLiteral("image://screen/%1?%2").arg(conv).arg(screen->serial);
+            item.text = tr("Area of the screen");
+            item.details = screen->window;
+        } else {
+            item.text = tr("Question about an area of the screen (the picture is not kept)");
+        }
+        m_messages.append(item);
+    };
+    if (screen != m_screens.cend() && history.isEmpty()) {
+        showScreen();
+        m_fresh = true;   // nothing asked yet: the first question names it
+    }
+    for (const QVariant &v : history) {
         const QVariantMap m = v.toMap();
         const QString role = m.value(QStringLiteral("role")).toString();
         if (role == QLatin1String("user")) {
+            if (m.contains(QStringLiteral("screen")) || (screen != m_screens.cend() && !screenShown))
+                showScreen();
             ChatModel::Item item;
             item.kind = QStringLiteral("user");
             item.text = m.value(QStringLiteral("text")).toString();

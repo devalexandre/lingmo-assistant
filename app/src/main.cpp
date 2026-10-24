@@ -22,6 +22,7 @@
 #include <QTranslator>
 
 #include "assistant.h"
+#include "screenimages.h"
 
 static const QString DBusService = QStringLiteral("com.lingmo.Assistant");
 static const QString DBusPath = QStringLiteral("/Assistant");
@@ -107,6 +108,7 @@ int main(int argc, char *argv[])
     qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/AppState.qml")), "Lingmo.Assistant", 1, 0, "Ui");
 
     QQmlApplicationEngine qml;
+    qml.addImageProvider(QStringLiteral("screen"), new ScreenImages);
     qml.rootContext()->setContextProperty(QStringLiteral("assistant"), &assistant);
     // Push-to-talk from the global shortcut: only the voice pill, not the window
     qml.rootContext()->setContextProperty(QStringLiteral("startHidden"), parser.isSet(voiceOption));

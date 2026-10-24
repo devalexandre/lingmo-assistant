@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from .. import agenda, config, desktop, documents, mail, notes, paths, shell, tools
+from .. import agenda, config, desktop, documents, intents, mail, notes, paths, shell, tools
 from . import schedule
 
 
@@ -69,6 +69,13 @@ def _message(ctx: Ctx, acc: dict, uid: str, folder: str) -> dict:
 
 def preview(ctx: Ctx, type_: str, p: dict) -> tuple[str, str]:
     """(title, details) for the confirmation card; may prepare drafts (stored in ctx.cache)."""
+    if type_.startswith("intent."):
+        intent = _intent(type_)
+        try:
+            params = intents.check(intent, _intent_args(intent, p), "flows")
+        except intents.li.IntentError as exc:
+            raise ActionError(exc.message) from None
+        return "%s › %s" % (intent.app_name_text("pt_BR"), intent.title_text("pt_BR")), intents.details(intent, params)
     if type_ == "action.mail.send":
         acc = _account(ctx, p.get("account", ""))
         draft = mail.build_draft(p.get("to", ""), p.get("subject", ""), p.get("body", ""), p.get("cc", ""))
@@ -146,7 +153,40 @@ def _event(p: dict) -> dict:
 
 # ------------------------------------------------------------------ actions
 
+def _intent(type_: str):
+    intent = intents.get(type_[len("intent."):])
+    if intent is None:
+        raise ActionError("O app desta ação não está instalado: %s" % type_[len("intent."):])
+    return intent
+
+
+def _intent_args(intent, p: dict) -> dict:
+    """Rendered block parameters as the intent takes them (empty optional fields = default)."""
+    out = {}
+    for name in intent.properties:
+        v = p.get(name)
+        if v in ("", None, []) and name not in intent.required:
+            continue
+        out[name] = v
+    return out
+
+
+def run_intent(ctx: Ctx, type_: str, p: dict) -> dict:
+    intent = _intent(type_)
+    try:
+        params = intents.check(intent, _intent_args(intent, p), "flows")
+        # The flow was approved when saved, and "send" asked on this run (permissions.py)
+        result = intents.execute(intent, params, "flows", {"confirmed": True})
+    except intents.li.IntentError as exc:
+        raise ActionError(exc.message) from None
+    summary = intent.summary_text(params, "pt_BR")
+    text = result.get("text") if isinstance(result.get("text"), str) else ""
+    return {"output": text or ("%s: feito." % summary), "result": result}
+
+
 def run(ctx: Ctx, type_: str, p: dict) -> dict:
+    if type_.startswith("intent."):
+        return run_intent(ctx, type_, p)
     fn = ACTIONS.get(type_)
     if fn is None:
         raise ActionError("Este bloco não pode ser executado.")

@@ -24,6 +24,12 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(h / ".config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(h / ".local" / "share"))
     monkeypatch.delenv("LINGMO_ASSISTANT_NOTES_DIR", raising=False)
+    # No app actions unless a test installs manifests (lingmo-intents)
+    (h / "intents").mkdir()
+    monkeypatch.setenv("LINGMO_INTENTS_DIRS", str(h / "intents"))
+    monkeypatch.setenv("LINGMO_INTENTS_LOCALE", "pt_BR")
+    from lingmo_assistant import intents
+    intents.reset()
     return h
 
 

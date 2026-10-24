@@ -132,6 +132,15 @@ def check_node(node: dict, cfg: config.Config) -> None:
     nt = nodes.get(node.get("type", ""))
     if nt is None:
         raise PermissionDenied("Tipo de bloco desconhecido.")
+    if nt.intent:
+        # Lingmo Intents: the same gate the app applies (read/write switches,
+        # the tool checkbox, Settings › IA › "Ações dos apps")
+        from .. import intents
+        from lingmo_intents import IntentError
+        try:
+            intents.gate().check(intents.get(nt.intent), {}, {"caller": "flows", "confirmed": True})
+        except IntentError as exc:
+            raise PermissionDenied(exc.message) from None
     if nt.capability is None:
         return
     for tid in nt.capability.tools:

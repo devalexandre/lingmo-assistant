@@ -82,6 +82,12 @@ def describe(flow: dict, cfg: Optional[config.Config] = None, accounts: Optional
         for tid in c.tools:
             if not cfg.tool_enabled(tid):
                 blocked.append(cfg.denial(tid))
+    for n in flow["nodes"]:     # app actions: the same gate the app applies
+        if n.get("type", "").startswith("intent."):
+            try:
+                permissions.check_node(n, cfg)
+            except permissions.PermissionDenied as exc:
+                blocked.append(str(exc))
     t = graph.trigger(flow)
     return {"id": flow["id"], "name": flow["name"], "description": flow.get("description", ""),
             "enabled": flow.get("enabled", True), "revision": flow.get("revision", 0),

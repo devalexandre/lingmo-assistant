@@ -10,6 +10,7 @@
 #include "flowdocument.h"
 
 #include <QJsonArray>
+#include <algorithm>
 #include <QJSValue>
 #include <QJsonDocument>
 #include <QRectF>
@@ -994,16 +995,40 @@ QString FlowDocument::category(const QString &id) const
 
 QVariantList FlowDocument::palette(const QString &filter) const
 {
+    // Hidden types (kept only for old workflows) are left out; "Ações" is
+    // grouped by app (Mail, Relógio, Notas… with the apps' Lingmo Intents), so
+    // every row gets a "section": the category, or "actions|<app>"
     const QString f = filter.trimmed().toLower();
-    QVariantList out;
+    QStringList order;
+    for (const QVariant &c : m_catalogue.value(QStringLiteral("categories")).toList())
+        order << c.toMap().value(QStringLiteral("id")).toString();
+    QList<QVariantMap> rows;
     for (const QVariant &v : m_catalogue.value(QStringLiteral("types")).toList()) {
-        const QVariantMap t = v.toMap();
+        QVariantMap t = v.toMap();
+        if (t.value(QStringLiteral("hidden")).toBool())
+            continue;
         if (!f.isEmpty() && !t.value(QStringLiteral("label")).toString().toLower().contains(f)
             && !t.value(QStringLiteral("description")).toString().toLower().contains(f)
             && !t.value(QStringLiteral("group")).toString().toLower().contains(f))
             continue;
-        out << t;
+        const QString category = t.value(QStringLiteral("category")).toString();
+        const QString group = t.value(QStringLiteral("group")).toString();
+        t.insert(QStringLiteral("section"), category == QLatin1String("actions") && !group.isEmpty()
+                                                ? category + QLatin1Char('|') + group : category);
+        rows << t;
     }
+    std::stable_sort(rows.begin(), rows.end(), [&order](const QVariantMap &a, const QVariantMap &b) {
+        const int ca = order.indexOf(a.value(QStringLiteral("category")).toString());
+        const int cb = order.indexOf(b.value(QStringLiteral("category")).toString());
+        if (ca != cb)
+            return ca < cb;
+        if (a.value(QStringLiteral("category")).toString() != QLatin1String("actions"))
+            return false;
+        return a.value(QStringLiteral("group")).toString().localeAwareCompare(b.value(QStringLiteral("group")).toString()) < 0;
+    });
+    QVariantList out;
+    for (const QVariantMap &r : rows)
+        out << r;
     return out;
 }
 

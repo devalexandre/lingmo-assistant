@@ -263,6 +263,48 @@ private Q_SLOTS:
         QVERIFY(copy.canUndo());
     }
 
+    // The palette: hidden types left out, "Ações" grouped by app (Lingmo Intents)
+    void paletteGroupsActionsByApp()
+    {
+        auto withGroup = [](QVariantMap t, const QString &group, bool hidden = false) {
+            t.insert(QStringLiteral("group"), group);
+            t.insert(QStringLiteral("hidden"), hidden);
+            t.insert(QStringLiteral("description"), t.value(QStringLiteral("type")));
+            return t;
+        };
+        const QVariantList categories{QVariantMap{{QStringLiteral("id"), QStringLiteral("triggers")}},
+                                      QVariantMap{{QStringLiteral("id"), QStringLiteral("actions")}},
+                                      QVariantMap{{QStringLiteral("id"), QStringLiteral("logic")}}};
+        const QVariantList types{
+            withGroup(type(QStringLiteral("trigger.manual"), QStringLiteral("triggers"), {QStringLiteral("out")}, {}), QString()),
+            withGroup(type(QStringLiteral("action.clock.alarm"), QStringLiteral("actions"), {QStringLiteral("out")}, {}), QStringLiteral("Relógio"), true),
+            withGroup(type(QStringLiteral("action.system.speak"), QStringLiteral("actions"), {QStringLiteral("out")}, {}), QStringLiteral("Sistema")),
+            withGroup(type(QStringLiteral("logic.if"), QStringLiteral("logic"), {QStringLiteral("true")}, {}), QString()),
+            withGroup(type(QStringLiteral("intent.mail.send"), QStringLiteral("actions"), {QStringLiteral("out")}, {}), QStringLiteral("E-mail")),
+            withGroup(type(QStringLiteral("intent.clock.alarm.create"), QStringLiteral("actions"), {QStringLiteral("out")},
+                           {QStringLiteral("output"), QStringLiteral("result"), QStringLiteral("result.time")}), QStringLiteral("Relógio"))};
+        FlowDocument doc;
+        doc.setCatalogue({{QStringLiteral("categories"), categories}, {QStringLiteral("types"), types}});
+        QStringList order, sections;
+        for (const QVariant &v : doc.palette(QString())) {
+            order << v.toMap().value(QStringLiteral("type")).toString();
+            sections << v.toMap().value(QStringLiteral("section")).toString();
+        }
+        QCOMPARE(order, (QStringList{QStringLiteral("trigger.manual"), QStringLiteral("intent.mail.send"),
+                                     QStringLiteral("intent.clock.alarm.create"), QStringLiteral("action.system.speak"),
+                                     QStringLiteral("logic.if")}));
+        QCOMPARE(sections, (QStringList{QStringLiteral("triggers"), QStringLiteral("actions|E-mail"),
+                                        QStringLiteral("actions|Relógio"), QStringLiteral("actions|Sistema"),
+                                        QStringLiteral("logic")}));
+        // the filter also looks at the app name
+        QCOMPARE(doc.palette(QStringLiteral("relógio")).size(), 1);
+        // a hidden type still works for old workflows
+        QVERIFY(!doc.nodeType(QStringLiteral("action.clock.alarm")).isEmpty());
+        // intent outputs are offered as {{node.result.x}}
+        const QString id = doc.addNode(QStringLiteral("intent.clock.alarm.create"), 0, 0);
+        QVERIFY(doc.outputs(id).contains(QStringLiteral("result.time")));
+    }
+
     void runStateAndIssues()
     {
         FlowDocument doc;
