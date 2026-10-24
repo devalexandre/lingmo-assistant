@@ -176,5 +176,6 @@ def test_speech_round_trip(eng, home, tmp_path, monkeypatch):
     assert cap.wait_for("voice_state")["state"] == "listening"
     text = cap.wait_for("voice_text", timeout=300)["text"]
     assert any(ev["type"] == "voice_level" and ev["level"] > 0.1 for ev in cap.lines)
-    assert "acorde" in text.lower() and ("sete" in text.lower() or "7" in text)
+    low = text.lower()   # whisper may write "acorde"/"acorda", "sete"/"7"
+    assert "acord" in low and ("sete" in low or "7" in low), text
     assert not list(Path(e.extra.tmp).glob("voice-*.wav"))        # recording removed

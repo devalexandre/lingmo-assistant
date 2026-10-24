@@ -299,6 +299,7 @@ private:
     qreal m_voiceSeconds = 0;
     QString m_voiceText;
     QString m_voiceAnswer;
+    QString m_chatAnswer;   // the answer being streamed, read aloud when voice replies are on
     QString m_voiceMessage;
     QString m_voiceConversation;
     bool m_speaking = false;

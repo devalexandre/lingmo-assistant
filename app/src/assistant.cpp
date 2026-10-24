@@ -348,9 +348,11 @@ void Assistant::onEvent(const QVariantMap &event)
     }
 
     if (type == QLatin1String("started")) {
+        m_chatAnswer.clear();
         setBusy(true);
     } else if (type == QLatin1String("token")) {
         m_messages.appendToken(event.value(QStringLiteral("text")).toString());
+        m_chatAnswer += event.value(QStringLiteral("text")).toString();
         if (m_voiceVisible && conv == m_voiceConversation) {
             m_voiceAnswer += event.value(QStringLiteral("text")).toString();
             if (m_voiceState != QLatin1String("answering"))
@@ -405,7 +407,11 @@ void Assistant::onEvent(const QVariantMap &event)
             if (voiceReplies() && !m_voiceAnswer.trimmed().isEmpty())
                 speak(m_voiceAnswer);
             setVoiceState(QStringLiteral("idle"));
+        } else if (voiceReplies() && !m_chatAnswer.trimmed().isEmpty()) {
+            // "Responder em voz alta" also reads answers to typed questions
+            speak(m_chatAnswer);
         }
+        m_chatAnswer.clear();
         m_engine.send(QJsonObject{{QStringLiteral("type"), QStringLiteral("list_conversations")}});
     }
 }

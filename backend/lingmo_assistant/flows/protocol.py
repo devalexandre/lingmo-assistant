@@ -3,7 +3,9 @@
 forwards the request types it doesn't handle itself."""
 from __future__ import annotations
 
+import atexit
 import logging
+import shutil
 import tempfile
 import threading
 from pathlib import Path
@@ -44,6 +46,11 @@ class Handler:
         # Each engine owns its recordings; another instance's abandoned files
         # must never be reused or removed by this one.
         self.tmp = Path(tempfile.mkdtemp(prefix="lingmo-assistant-%d-" % _uid()))
+        atexit.register(self.remove_tmp)
+
+    def remove_tmp(self) -> None:
+        """The engine's own temporary folder (recordings, speech) goes away with it."""
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     def handle(self, kind: str, r: dict) -> None:
         try:
@@ -63,6 +70,7 @@ class Handler:
         if self.recorder:
             self.recorder.cancel()
         self.speaker.stop()
+        self.remove_tmp()
 
     # ------------------------------------------------------------------ models and agents
 
