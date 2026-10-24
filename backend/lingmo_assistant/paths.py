@@ -122,6 +122,21 @@ class PathPolicy:
                               + ", ".join(sorted(WRITABLE_EXTENSIONS)) + ").")
         return resolved
 
+    def check_folder(self, raw: str) -> Path:
+        """A folder inside the allowed ones where new files may be saved (attachments,
+        screenshots). It may not exist yet; hidden folders are refused."""
+        resolved = self._check(raw)
+        if resolved.exists() and not resolved.is_dir():
+            raise PolicyError("O caminho não é uma pasta.")
+        home_rel = [part for part in resolved.parts if part.startswith(".")]
+        if home_rel:
+            raise PolicyError("O assistente não grava em pastas ocultas.")
+        return resolved
+
+    def check_inside(self, raw: str) -> Path:
+        """Any path (file or folder) inside the allowed folders, outside the blocked areas."""
+        return self._check(raw)
+
     def allowed_child(self, path: Path) -> bool:
         """For directory walks: skip blocked entries and symlinks leaving the roots."""
         if name_blocked(path.name):

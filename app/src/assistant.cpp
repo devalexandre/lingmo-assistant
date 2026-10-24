@@ -97,6 +97,10 @@ Assistant::Assistant(QObject *parent)
     m_conversationId = newId();
     if (EngineClient::isInstalled())
         m_engine.send(QJsonObject{{QStringLiteral("type"), QStringLiteral("list_conversations")}});
+    connect(&m_flow, &FlowDocument::changed, this, [this] {
+        if (m_flow.loaded() && m_flow.dirty())
+            validateFlow();
+    });
 }
 
 QString Assistant::title() const
@@ -168,9 +172,12 @@ void Assistant::send(const QString &text)
         Q_EMIT conversationChanged();
     }
     setBusy(true);
-    m_engine.send(QJsonObject{{QStringLiteral("type"), QStringLiteral("chat")},
-                              {QStringLiteral("conversation_id"), m_conversationId},
-                              {QStringLiteral("message"), question}});
+    QJsonObject request{{QStringLiteral("type"), QStringLiteral("chat")},
+                        {QStringLiteral("conversation_id"), m_conversationId},
+                        {QStringLiteral("message"), question}};
+    if (!m_chatAgent.isEmpty())
+        request.insert(QStringLiteral("agent"), m_chatAgent);
+    m_engine.send(request);
 }
 
 void Assistant::stop()
@@ -283,6 +290,9 @@ void Assistant::onEvent(const QVariantMap &event)
     const QString conv = event.value(QStringLiteral("conversation_id")).toString();
     const bool current = conv.isEmpty() || conv == m_conversationId;
 
+    if (onExtraEvent(type, event))
+        return;
+
     if (type == QLatin1String("ready") || type == QLatin1String("config")) {
         m_model = event.value(QStringLiteral("model")).toString();
         const QVariant supported = event.value(QStringLiteral("tools_supported"));
@@ -321,6 +331,11 @@ void Assistant::onEvent(const QVariantMap &event)
     }
     if (type == QLatin1String("history")) {
         if (current) {
+            const QString agentId = event.value(QStringLiteral("agent")).toString();
+            if (agentId != m_chatAgent) {
+                m_chatAgent = agentId;
+                Q_EMIT chatAgentChanged();
+            }
             loadHistory(event);
             Q_EMIT conversationChanged();
         }
@@ -336,6 +351,12 @@ void Assistant::onEvent(const QVariantMap &event)
         setBusy(true);
     } else if (type == QLatin1String("token")) {
         m_messages.appendToken(event.value(QStringLiteral("text")).toString());
+        if (m_voiceVisible && conv == m_voiceConversation) {
+            m_voiceAnswer += event.value(QStringLiteral("text")).toString();
+            if (m_voiceState != QLatin1String("answering"))
+                m_voiceState = QStringLiteral("answering");
+            Q_EMIT voiceChanged();
+        }
     } else if (type == QLatin1String("thinking")) {
         m_messages.setThinking();
     } else if (type == QLatin1String("tool_start")) {
@@ -348,6 +369,8 @@ void Assistant::onEvent(const QVariantMap &event)
                              event.value(QStringLiteral("summary")).toString(),
                              event.value(QStringLiteral("output")).toString());
     } else if (type == QLatin1String("confirmation_required")) {
+        if (m_voiceVisible && conv == m_voiceConversation)
+            setVoiceState(QStringLiteral("answering"), tr("The assistant asks for permission in the window."));
         ChatModel::Item item;
         item.kind = QStringLiteral("confirm");
         item.requestId = event.value(QStringLiteral("request_id")).toString();
@@ -371,10 +394,18 @@ void Assistant::onEvent(const QVariantMap &event)
         m_messages.finishAnswer({});
         setError(event.value(QStringLiteral("message")).toString());
         setBusy(false);
+        if (m_voiceVisible && conv == m_voiceConversation)
+            setVoiceState(QStringLiteral("error"), event.value(QStringLiteral("message")).toString());
     } else if (type == QLatin1String("done")) {
         const QVariantMap stats = event.value(QStringLiteral("stats")).toMap();
         m_messages.finishAnswer(statsText(stats));
         setBusy(false);
+        if (conv == m_voiceConversation && !m_voiceConversation.isEmpty()) {
+            m_voiceConversation.clear();
+            if (voiceReplies() && !m_voiceAnswer.trimmed().isEmpty())
+                speak(m_voiceAnswer);
+            setVoiceState(QStringLiteral("idle"));
+        }
         m_engine.send(QJsonObject{{QStringLiteral("type"), QStringLiteral("list_conversations")}});
     }
 }

@@ -22,9 +22,13 @@ TOOLS: dict[str, tuple[str, bool]] = {
     "notes_read": (READ, True),
     "calendar_read": (READ, True),
     "web": (READ, False),
+    "mail_read": (READ, True),
     "notes_write": (WRITE, True),
     "calendar_write": (WRITE, True),
     "files_write": (WRITE, True),
+    "mail_write": (WRITE, True),
+    "alarms_write": (WRITE, True),
+    "desktop_actions": (WRITE, True),
 }
 DEFAULT_TOOLS = [tid for tid, (_, on) in TOOLS.items() if on]
 
@@ -42,8 +46,23 @@ def config_path() -> Path:
     return Path(base) / "lingmoos" / "ai.conf"
 
 
+def data_home() -> Path:
+    return Path(os.environ.get("XDG_DATA_HOME") or str(home() / ".local" / "share"))
+
+
 def data_dir() -> Path:
-    base = os.environ.get("XDG_DATA_HOME") or str(home() / ".local" / "share")
+    """The engine's private state (chat history database)."""
+    return data_home() / "lingmo-assistant"
+
+
+def user_dir() -> Path:
+    """The user's own assistant documents: workflows, agents, run history
+    (~/.local/share/lingmo/assistant)."""
+    return data_home() / "lingmo" / "assistant"
+
+
+def state_dir() -> Path:
+    base = os.environ.get("XDG_STATE_HOME") or str(home() / ".local" / "state")
     return Path(base) / "lingmo-assistant"
 
 
@@ -153,6 +172,16 @@ class Config:
     write: bool = False
     tools: set[str] = field(default_factory=lambda: set(DEFAULT_TOOLS))
     folders: list[Path] = field(default_factory=list)
+    # Voice (assistant_voice_* keys; see docs/assistant-contract.md)
+    voice_replies: bool = False
+    tts_voice: str = ""          # "" = automatic (piper voice for the locale, else espeak-ng)
+    tts_rate: float = 1.0        # 0.5 (slow) .. 2.0 (fast)
+    stt_model: str = ""          # whisper model name; "" = fast automatic choice
+    subtitle_model: str = ""     # Lingmo Studio / Settings transcription model
+    subtitle_language: str = ""
+
+    def group_allowed(self, group: str) -> bool:
+        return self.read if group == READ else self.write
 
     def tool_enabled(self, tool_id: str) -> bool:
         """A tool runs only when checked AND its group permission is on."""
@@ -208,4 +237,16 @@ def load(path: Path | None = None) -> Config:
             if p.is_absolute() and p not in out:
                 out.append(p)
         cfg.folders = out
+    cfg.voice_replies = _as_bool(get("assistant_voice_replies"), False)
+    voice = get("assistant_tts_voice")
+    cfg.tts_voice = voice.strip() if isinstance(voice, str) else ""
+    try:
+        rate = float(get("assistant_tts_rate") or 1.0)
+    except (TypeError, ValueError):
+        rate = 1.0
+    cfg.tts_rate = min(2.0, max(0.5, rate))
+    for attr, key in (("stt_model", "assistant_stt_model"), ("subtitle_model", "subtitle_model"),
+                      ("subtitle_language", "subtitle_language")):
+        value = get(key)
+        setattr(cfg, attr, value.strip() if isinstance(value, str) else "")
     return cfg

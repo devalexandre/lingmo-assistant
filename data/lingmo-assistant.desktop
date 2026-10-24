@@ -11,4 +11,20 @@ Icon=lingmo-assistant
 Terminal=false
 StartupNotify=true
 Categories=Utility;Qt;
-Keywords=AI;IA;assistant;assistente;chat;ollama;
+Keywords=AI;IA;assistant;assistente;chat;ollama;voz;voice;fluxos;workflows;agentes;agents;
+Actions=Voice;Flows;Agents;
+
+[Desktop Action Voice]
+Name=Ask by voice
+Name[pt_BR]=Perguntar por voz
+Exec=lingmo-assistant --voice
+
+[Desktop Action Flows]
+Name=Workflows
+Name[pt_BR]=Fluxos
+Exec=lingmo-assistant --section flows
+
+[Desktop Action Agents]
+Name=Agents
+Name[pt_BR]=Agentes
+Exec=lingmo-assistant --section agents

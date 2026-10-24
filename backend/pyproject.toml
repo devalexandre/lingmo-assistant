@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lingmo-assistant"
-version = "1.0.0"
+version = "1.1.0"
 description = "Lingmo Assistente: local AI assistant engine for the Lingmo desktop"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
@@ -12,9 +12,10 @@ dependencies = ["agno>=3.1", "ollama", "openai", "sqlalchemy", "greenlet"]
 
 [project.scripts]
 lingmo-assistant-engine = "lingmo_assistant.engine:main"
+lingmo-assistant-flows = "lingmo_assistant.flows.daemon:main"
 
-[tool.setuptools]
-packages = ["lingmo_assistant"]
+[tool.setuptools.packages.find]
+include = ["lingmo_assistant*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

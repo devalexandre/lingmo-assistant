@@ -15,6 +15,7 @@
 #include <QLocale>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QtQml/qqml.h>
 #include <QQuickWindow>
 #include <QSettings>
 #include <QStandardPaths>
@@ -63,8 +64,15 @@ int main(int argc, char *argv[])
     QCommandLineOption openOption(QStringLiteral("open"), QStringLiteral("Open a conversation"), QStringLiteral("id"));
     QCommandLineOption askOption(QStringLiteral("ask"), QStringLiteral("Ask a question in a new conversation"),
                                  QStringLiteral("text"));
+    QCommandLineOption voiceOption(QStringLiteral("voice"), QStringLiteral("Ask by voice (push-to-talk)"));
+    QCommandLineOption sectionOption(QStringLiteral("section"), QStringLiteral("Open a section: chat, flows, agents, settings"),
+                                     QStringLiteral("name"));
     parser.addOption(openOption);
     parser.addOption(askOption);
+    QCommandLineOption flowOption(QStringLiteral("flow"), QStringLiteral("Open a workflow in the editor"), QStringLiteral("id"));
+    parser.addOption(voiceOption);
+    parser.addOption(flowOption);
+    parser.addOption(sectionOption);
     parser.process(app);
 
     QTranslator translator;
@@ -76,7 +84,13 @@ int main(int argc, char *argv[])
     QDBusConnection bus = QDBusConnection::sessionBus();
     if (bus.isConnected() && !bus.registerService(DBusService)) {
         QDBusInterface iface(DBusService, DBusPath, DBusService, bus);
-        if (parser.isSet(openOption))
+        if (parser.isSet(voiceOption))
+            iface.call(QStringLiteral("voice"));
+        else if (parser.isSet(flowOption))
+            iface.call(QStringLiteral("showFlow"), parser.value(flowOption));
+        else if (parser.isSet(sectionOption))
+            iface.call(QStringLiteral("showSection"), parser.value(sectionOption));
+        else if (parser.isSet(openOption))
             iface.call(QStringLiteral("open"), parser.value(openOption));
         else if (parser.isSet(askOption))
             iface.call(QStringLiteral("ask"), parser.value(askOption));
@@ -90,8 +104,14 @@ int main(int argc, char *argv[])
     Assistant assistant;
     bus.registerObject(DBusPath, &assistant, QDBusConnection::ExportAllSlots);
 
+    qmlRegisterSingletonType(QUrl(QStringLiteral("qrc:/qml/AppState.qml")), "Lingmo.Assistant", 1, 0, "Ui");
+
     QQmlApplicationEngine qml;
     qml.rootContext()->setContextProperty(QStringLiteral("assistant"), &assistant);
+    // Push-to-talk from the global shortcut: only the voice pill, not the window
+    qml.rootContext()->setContextProperty(QStringLiteral("startHidden"), parser.isSet(voiceOption));
+    if (parser.isSet(sectionOption))
+        assistant.setSection(parser.value(sectionOption));
     qml.load(QUrl(QStringLiteral("qrc:/qml/Main.qml")));
     if (qml.rootObjects().isEmpty())
         return 1;
@@ -103,7 +123,11 @@ int main(int argc, char *argv[])
         window->requestActivate();
     });
 
-    if (parser.isSet(openOption))
+    if (parser.isSet(voiceOption))
+        assistant.voice();
+    else if (parser.isSet(flowOption))
+        assistant.showFlow(parser.value(flowOption));
+    else if (parser.isSet(openOption))
         assistant.open(parser.value(openOption));
     else if (parser.isSet(askOption))
         assistant.ask(parser.value(askOption));

@@ -63,7 +63,7 @@ def test_protocol_framing_and_streaming(make_engine):
     eng, cap, _ = make_engine([("think", "hmm", "Olá mundo")])
     stdin = io.StringIO('{"type":"chat","conversation_id":"c1","message":"oi"}\nnot json\n{"type":"what"}\n')
     engine_mod.serve(stdin, eng.out, eng)
-    assert cap.lines[0]["type"] == "ready" and cap.lines[0]["protocol"] == 1
+    assert cap.lines[0]["type"] == "ready" and cap.lines[0]["protocol"] == 2
     done = cap.wait_for("done")
     text = "".join(e["text"] for e in cap.lines if e["type"] == "token")
     assert text.strip() == "Olá mundo"

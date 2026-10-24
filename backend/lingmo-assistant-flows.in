@@ -1,0 +1,12 @@
+#!/usr/bin/python3 -I
+# Lingmo Assistente background workflows: scheduled and event triggers without
+# the app window (started at login by /etc/xdg/autostart/lingmo-assistant-flows.desktop).
+#   lingmo-assistant-flows            run the service (one per user)
+#   lingmo-assistant-flows --run ID   run a workflow now (global shortcuts)
+#   lingmo-assistant-flows --status   the workflows running now (JSON)
+import sys
+
+sys.path.insert(0, "@ENGINE_DIR@")
+from lingmo_assistant.flows.daemon import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

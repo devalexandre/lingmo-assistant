@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=Assistant Workflows
+Name[pt_BR]=Fluxos do Assistente
+Comment=Runs scheduled and event-triggered workflows of Lingmo Assistant
+Comment[pt_BR]=Executa os fluxos agendados e por eventos do Assistente do Lingmo
+Exec=lingmo-assistant-flows
+TryExec=lingmo-assistant-flows
+Icon=lingmo-assistant
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=15
+X-KDE-autostart-after=panel

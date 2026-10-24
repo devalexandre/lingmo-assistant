@@ -1,7 +1,26 @@
 <RCC>
     <qresource prefix="/">
         <file>qml/Main.qml</file>
+        <file>qml/AppState.qml</file>
+        <file>qml/ChatPage.qml</file>
         <file>qml/ToolCard.qml</file>
         <file>qml/ConfirmCard.qml</file>
+        <file>qml/FlowList.qml</file>
+        <file>qml/FlowsPage.qml</file>
+        <file>qml/FlowEditor.qml</file>
+        <file>qml/FlowNode.qml</file>
+        <file>qml/FlowPalette.qml</file>
+        <file>qml/FlowInspector.qml</file>
+        <file>qml/NodeInspector.qml</file>
+        <file>qml/ParamField.qml</file>
+        <file>qml/ScheduleEditor.qml</file>
+        <file>qml/Minimap.qml</file>
+        <file>qml/AskCard.qml</file>
+        <file>qml/ApprovalDialog.qml</file>
+        <file>qml/AgentList.qml</file>
+        <file>qml/AgentsPage.qml</file>
+        <file>qml/AgentEditor.qml</file>
+        <file>qml/SettingsPage.qml</file>
+        <file>qml/VoicePill.qml</file>
     </qresource>
 </RCC>

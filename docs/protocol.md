@@ -1,4 +1,4 @@
-# Lingmo Assistente — engine protocol (version 1)
+# Lingmo Assistente — engine protocol (version 2)
 
 `lingmo-assistant-engine` (installed at `/usr/lib/lingmo-assistant/lingmo-assistant-engine`)
 is a long-running worker. Clients (the Assistente app, Spotlight) start it with
@@ -18,13 +18,18 @@ line, UTF-8, in both directions. Every object has a `"type"`.
   example, they build "Executou: lscpu" from `tool_start`).
 
 Other command-line forms: `--list-commands` prints the shell_read allowlist as a
-JSON array and exits; `--version` prints the version.
+JSON array and exits; `--version` prints the version; `--voice-status` prints what
+the voice stack finds (JSON); `--flows-daemon`, `--run ID` and `--status` are the
+background workflow service (installed as `lingmo-assistant-flows`, see below).
+
+Version 2 only adds requests and events (agents, workflows, voice) and the
+optional `agent` field of `chat`; version-1 clients keep working.
 
 ## Requests (client → engine)
 
 | type | fields | meaning |
 |---|---|---|
-| `chat` | `conversation_id`, `message` | Ask something. `conversation_id` is chosen by the client: 1–100 chars of `[A-Za-z0-9_-]` (a UUID is fine). History is kept per conversation. |
+| `chat` | `conversation_id`, `message`, optional `agent` | Ask something. `conversation_id` is chosen by the client: 1–100 chars of `[A-Za-z0-9_-]` (a UUID is fine). History is kept per conversation. `agent` (an agent id, or a name as typed after `@`, e.g. `secretaria`) answers with that custom agent; it stays the agent of the conversation. |
 | `confirm` | `request_id`, `allow` (bool) | Answer a `confirmation_required`. |
 | `stop` | — | Stop the current answer. A pending confirmation is left unanswered (the run stays paused in the database). |
 | `reload_config` | — | Re-read `ai.conf` and the model's capabilities; answered with `config`. (The engine also re-reads `ai.conf` for every message and every tool call.) |
@@ -49,7 +54,7 @@ JSON array and exits; `--version` prints the version.
 | `done` | `conversation_id`, `stopped` (bool), `stats`: `{seconds, tokens_per_s, tokens, model}` — `seconds` excludes the time spent waiting for the user |
 | `error` | `message`, optional `conversation_id` |
 | `conversations` | `items`: `[{id, title, updated (unix time)}]`, newest first |
-| `history` | `conversation_id`, `title`, `messages`: `[{role: "user", text} \| {role: "assistant", text, tools: [{tool, function, args_summary, ok, summary, output}]}]`, `pending`: `[{request_id, tool, function, title, details}]` |
+| `history` | `conversation_id`, `title`, `agent` (id or ""), `messages`: `[{role: "user", text} \| {role: "assistant", text, tools: [{tool, function, args_summary, ok, summary, output}]}]`, `pending`: `[{request_id, tool, function, title, details}]` |
 | `deleted` | `conversation_id` |
 
 A normal answer: `started`, then any mix of `thinking`, `token`, `tool_start`/`tool_end`,
@@ -96,8 +101,113 @@ that `request_id` resumes the stored run there.
 | `notes_read` | `list_notes`, `read_note` |
 | `calendar_read` | `calendar_agenda` |
 | `web` | `web_search`, `read_web_page` |
+| `mail_read` | `list_emails`, `read_email` |
+| `mail_write` | `send_email`, `reply_email` |
+| `alarms_write` | `create_alarm`, `start_timer` |
+| `desktop_actions` | `open_app` |
 | `notes_write` | `create_note`, `append_to_note` |
 | `calendar_write` | `create_event`, `create_reminder`, `create_task` |
 | `files_write` | `write_file` (modes `create`, `append`, `overwrite`) |
 
 Nothing deletes, renames or moves anything.
+
+
+## Protocol 2: agents, workflows, voice
+
+User-facing texts in these events (node labels, capability summaries, errors) are
+pt-BR, like the rest of the protocol. A failing request answers
+`error {message, request: <request type>}`.
+
+### Custom agents
+
+Stored as JSON in `~/.local/share/lingmo/assistant/agents/<id>.json` (see
+`agents.py`); four starters are written on first use and can be edited or
+removed (removing moves the file to `agents/.trash`).
+
+| request | fields | answer |
+|---|---|---|
+| `agents` | — | `agents {items, tools: [{id, group, enabled}], read, write, default_model}` — `enabled` is the global state in Settings › IA |
+| `agent_save` | `agent` (without `id` = new) | `agent_saved {agent}` then `agents` |
+| `agent_remove` | `id` | `agents` |
+| `models` | — | `models {items: [{name, size, tools, thinking, embedding, tags: [{id, text}], in_use, recommended}]}` (installed Ollama models) |
+
+An agent's tools are the intersection of its own list and the tools enabled in
+Settings; the read/write switches still apply; every write still asks for
+confirmation. Knowledge folders (read-only search) must be inside the allowed
+folders.
+
+### Workflows
+
+Versioned JSON in `~/.local/share/lingmo/assistant/workflows/<id>.json`
+(`format: "lingmo-assistant-flow"`, `format_version: 1`, `revision`); the last 10
+revisions are kept in `workflows/.history/<id>/`. Run logs:
+`runs/<flow id>/<run id>.json`. Capability approvals: `approvals.json` (never part
+of a workflow file).
+
+| request | fields | answer |
+|---|---|---|
+| `flow_catalogue` | — | `flow_catalogue {categories, types, templates, accounts, agents, folders, tools}` — `types` is the node catalogue: `{type, category, group, label, description, icon, params: [{name, label, kind, default, required, options, placeholder, help, template}], ports, port_labels, input, outputs, capability: {tools, verb, writes, external} \| null}` |
+| `flows` | — | `flows {items: [info], running: [{run_id, flow_id, status}]}` |
+| `flow_get` | `id` | `flow {flow, info}` |
+| `flow_new` | optional `template` | `flow {flow, info, unsaved: true}` (not written) |
+| `flow_validate` | `flow` | `flow_issues {id, issues, summary, capabilities, approved}` |
+| `flow_save` | `flow` | `flow_saved {flow, info}` then `flows`. A workflow with errors is saved switched off. |
+| `flow_approve` | `id`, `cap_hash` (from `info`), `dont_ask` | `flow_saved`. Refused when the capabilities changed since `info` was shown. |
+| `flow_set_enabled` | `id`, `enabled` | `flow_saved` |
+| `flow_remove` | `id` | `flows` (the file moves to `workflows/.trash`) |
+| `flow_import` | `text` (JSON) | `flow_saved` — imported switched off, never approved, new id when taken |
+| `flow_export` | `id` | `flow_export {id, text}` |
+| `flow_run` | `flow_id`, `mode` (`run` \| `test`) | events below |
+| `flow_answer` | `request_id`, `allow`, optional `dont_ask`, optional `text` | — |
+| `flow_stop` | `run_id` | — |
+| `flow_runs` | `flow_id` | `flow_runs {flow_id, items: [{id, status, mode, started, ended, trigger, error, source}]}` |
+| `flow_run_log` | `flow_id`, `run_id` | `flow_run_log {run}` with `steps: [{node, type, label, status, started, ended, inputs, outputs, error}]` |
+
+`info` = `{id, name, enabled, revision, trigger_type, trigger_text, capabilities:
+[{tools, text, writes, external, nodes}], summary, cap_hash, approved, dont_ask,
+issues: [{level, node, message}], blocked: [reasons from Settings], background,
+spotlight}`.
+
+Run events: `flow_run_started {run_id, flow_id, flow_name, mode}`, `flow_node
+{run_id, flow_id, node, status: running|waiting|done|error|declined, output, error}`,
+`flow_ask {run_id, flow_id, request_id, node, kind: confirm|input, title, details,
+external}` (the run pauses until `flow_answer`), `flow_ask_resolved {run_id,
+request_id}`, `flow_run_done {run_id, flow_id, status: done|failed|stopped|refused,
+error}`.
+
+The permission gate (`flows/permissions.py`): no node type deletes and validation
+refuses any that would; a workflow runs only when its current capabilities were
+approved; nodes marked `external` (sending or replying to e-mail) ask on every run
+unless approved with `dont_ask`; `test` mode asks before every writing node;
+Settings › IA (read/write switches and checked tools) is checked again for every
+node when it runs; every run is logged.
+
+### Voice
+
+| request | fields | answer |
+|---|---|---|
+| `voice_status` | — | `voice_status {whisper, whisper_models, piper, espeak, voices: [{id, name, language, engine}], language}` |
+| `voice_start` | optional `commands` (default true) | `voice_state {state: listening}`, `voice_level {level 0..1, seconds}` (~12/s), then `voice_state {transcribing}`, `voice_text {text, flow_id, flow_name}`, `voice_state {idle}` (or `{error, message}`). A `voice_start` while listening stops the recording (push-to-talk). When the text matches a workflow's "Comando de voz" trigger, that workflow runs (`flow_*` events) and `flow_id` is set; otherwise the client sends the text as a `chat`. |
+| `voice_stop` / `voice_cancel` | — | stop listening now (transcribe) / discard |
+| `voice_command` | `text` | as `voice_text` (match a voice trigger without the microphone) |
+| `speak` | `text` (Markdown is cleaned) | `speak_state {speaking: true}` … `{speaking: false}` |
+| `speak_stop` | — | — |
+
+Recording: `parecord`/`pw-record`/ffmpeg's pulse input, 16 kHz mono, until ~1.2 s
+of silence after speech (or 20 s); the audio is a private temporary file deleted
+after `whisper-cli` transcribes it. Text to speech: `piper-tts` with the chosen (or
+the locale's) voice, else `espeak-ng`.
+
+## Background workflows: `lingmo-assistant-flows`
+
+Started at login from `/etc/xdg/autostart/lingmo-assistant-flows.desktop`; one per
+user (lock file in `$XDG_STATE_HOME/lingmo-assistant/`). It runs the enabled,
+approved workflows whose trigger is a schedule, new e-mail, a calendar event, a
+file change or a system event, sleeping until the next one is due. Questions and
+per-run confirmations appear as notifications with Permitir/Recusar buttons.
+
+D-Bus `com.lingmo.AssistantFlows /AssistantFlows`: `Run(s flow_id) → s run_id`,
+`Running() → s` (JSON), `Reload()`, `Stop(s run_id)`. A workflow with a
+"Atalho de teclado" trigger gets an entry in `~/.config/lingmoglobalshortcutsrc`
+(lingmo-chotkeys) running `lingmo-assistant-flows --run <id>`; the service never
+touches entries it didn't create.

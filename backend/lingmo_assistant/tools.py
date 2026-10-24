@@ -29,7 +29,7 @@ from typing import Callable, Optional
 from agno.tools import tool
 from agno.tools.function import Function
 
-from . import agenda, config, documents, notes, paths, sandbox, shell, sysinfo, web
+from . import agenda, config, desktop, documents, mail, notes, paths, sandbox, shell, sysinfo, web
 
 log = logging.getLogger("lingmo_assistant.tools")
 
@@ -39,7 +39,7 @@ SEARCH_FILE_LIMIT = 4000  # files visited by one search
 SEARCH_SECONDS = 8
 
 KNOWN_ERRORS = (paths.PolicyError, shell.CommandError, sandbox.SandboxError, documents.DocumentError,
-                notes.NotesError, agenda.CalendarError, web.WebError)
+                notes.NotesError, agenda.CalendarError, web.WebError, mail.MailError, desktop.DesktopError)
 
 
 def untrusted(source: str, text: str) -> str:
@@ -77,6 +77,14 @@ FUNCTION_TOOL = {
     "create_reminder": "calendar_write",
     "create_task": "calendar_write",
     "write_file": "files_write",
+    "list_emails": "mail_read",
+    "read_email": "mail_read",
+    "send_email": "mail_write",
+    "reply_email": "mail_write",
+    "create_alarm": "alarms_write",
+    "start_timer": "alarms_write",
+    "open_app": "desktop_actions",
+    "search_knowledge": "read_files",
 }
 WRITE_FUNCTIONS = {f for f, t in FUNCTION_TOOL.items() if config.TOOLS[t][0] == config.WRITE}
 
@@ -211,6 +219,31 @@ class ToolContext:
                 return Preview(tool_id, function, "Substituir o conteúdo do arquivo",
                                "Arquivo: %s\nO que muda:\n\n%s" % (target, clip(diff or "(sem mudanças)", 20000)))
             raise paths.PolicyError("mode precisa ser create, append ou overwrite.")
+        if function == "send_email":
+            acc = mail.account(args.get("account") or "")
+            draft = mail.build_draft(args.get("to", ""), args.get("subject", ""), args.get("body", ""),
+                                     args.get("cc") or "")
+            return Preview(tool_id, function, "Enviar e-mail", _mail_details(acc, draft))
+        if function == "reply_email":
+            acc = mail.account(args.get("account") or "")
+            original = mail.read_message(acc["id"], args.get("message_id", ""), args.get("folder") or "INBOX")
+            draft = mail.reply_draft(original, args.get("body", ""))
+            return Preview(tool_id, function, "Responder e-mail", _mail_details(acc, draft))
+        if function == "create_alarm":
+            when = desktop.parse_alarm_time(args.get("time", ""))
+            return Preview(tool_id, function, "Criar alarme no Relógio",
+                           "Hora: %s\nNome: %s" % (when, args.get("label") or "Alarme"))
+        if function == "start_timer":
+            try:
+                minutes = float(args.get("minutes"))
+            except (TypeError, ValueError):
+                raise paths.PolicyError("Duração inválida.") from None
+            if not 0 < minutes <= 24 * 60:
+                raise paths.PolicyError("O timer vai de 1 segundo a 24 horas.")
+            return Preview(tool_id, function, "Iniciar timer no Relógio",
+                           "Duração: %g min\nNome: %s" % (minutes, args.get("label") or "Timer"))
+        if function == "open_app":
+            return Preview(tool_id, function, "Abrir", "Abrir: %s" % args.get("target", ""))
         raise paths.PolicyError("Ferramenta de escrita desconhecida.")
 
     # -------------------------------------------------------------- functions
@@ -542,6 +575,132 @@ class ToolContext:
                 return ctx.run("create_task", body)
             out.append(create_task)
 
+        if on("mail_read"):
+            @tool(name="list_emails")
+            def list_emails(folder: str = "INBOX", unread_only: bool = True, query: str = "", account: str = "") -> str:
+                """List recent e-mails of Lingmo Mail (newest first): id, sender, subject, date.
+                Use read_email to read one. Nothing is marked as read.
+
+                Args:
+                    folder: mailbox folder (default INBOX)
+                    unread_only: only unread messages (default true)
+                    query: optional words to search for
+                    account: optional account address (default: the first account)
+                """
+                def body(c, p):
+                    acc = mail.account(account)
+                    msgs = mail.list_messages(acc["id"], folder or "INBOX", unread_only, 30, "text", query)
+                    rows = ["%s | %s | %s | %s%s" % (m.get("id"), m.get("sender"), m.get("subject"), m.get("date"),
+                                                     " | anexo" if m.get("hasAttachment") else "") for m in msgs]
+                    return untrusted("e-mail list of %s" % acc["email"], "\n".join(rows) or "Nenhum e-mail."), \
+                        "%s, %d" % (folder or "INBOX", len(msgs))
+                return ctx.run("list_emails", body)
+            out.append(list_emails)
+
+            @tool(name="read_email")
+            def read_email(message_id: str, folder: str = "INBOX", account: str = "") -> str:
+                """Read one e-mail (sender, recipients, subject, text, attachment names).
+
+                Args:
+                    message_id: the id from list_emails
+                    folder: its folder (default INBOX)
+                    account: optional account address
+                """
+                def body(c, p):
+                    acc = mail.account(account)
+                    m = mail.read_message(acc["id"], message_id, folder or "INBOX")
+                    text = "De: %s\nPara: %s\nData: %s\nAssunto: %s\nAnexos: %s\n\n%s" % (
+                        m.get("sender"), m.get("to"), m.get("date"), m.get("subject"),
+                        ", ".join(m.get("attachments") or []) or "nenhum", m.get("body") or "")
+                    return untrusted("e-mail", clip(text)), str(m.get("subject") or message_id)
+                return ctx.run("read_email", body)
+            out.append(read_email)
+
+        if on("mail_write"):
+            @tool(name="send_email", requires_confirmation=True)
+            def send_email(to: str, subject: str, body: str, cc: str = "", account: str = "") -> str:
+                """Send a plain-text e-mail from the user's Lingmo Mail account. The user sees the
+                exact message and must confirm first.
+
+                Args:
+                    to: recipient addresses, comma separated
+                    subject: subject line
+                    body: the message text
+                    cc: optional copy addresses
+                    account: optional sender account address (default: the first account)
+                """
+                def run(c, p):
+                    acc = mail.account(account)
+                    draft = mail.build_draft(to, subject, body, cc)
+                    mail.send(acc["id"], draft)
+                    return "E-mail enviado para %s." % draft["to"], draft["subject"]
+                return ctx.run("send_email", run)
+            out.append(send_email)
+
+            @tool(name="reply_email", requires_confirmation=True)
+            def reply_email(message_id: str, body: str, folder: str = "INBOX", account: str = "") -> str:
+                """Reply to an e-mail (quoting it). The user sees the reply and must confirm first.
+
+                Args:
+                    message_id: the id from list_emails
+                    body: the reply text (without the quote)
+                    folder: the message's folder (default INBOX)
+                    account: optional account address
+                """
+                def run(c, p):
+                    acc = mail.account(account)
+                    original = mail.read_message(acc["id"], message_id, folder or "INBOX")
+                    draft = mail.reply_draft(original, body)
+                    mail.send(acc["id"], draft)
+                    return "Resposta enviada para %s." % draft["to"], draft["subject"]
+                return ctx.run("reply_email", run)
+            out.append(reply_email)
+
+        if on("alarms_write"):
+            @tool(name="create_alarm", requires_confirmation=True)
+            def create_alarm(time: str, label: str = "Alarme") -> str:
+                """Create an alarm in Lingmo Clock (rings every day at that time while active).
+                The user is asked to confirm first.
+
+                Args:
+                    time: local time HH:MM, e.g. "07:30"
+                    label: what the alarm is for
+                """
+                def run(c, p):
+                    when = desktop.add_alarm(time, label)
+                    return "Alarme criado para %s." % when, when
+                return ctx.run("create_alarm", run)
+            out.append(create_alarm)
+
+            @tool(name="start_timer", requires_confirmation=True)
+            def start_timer(minutes: float, label: str = "Timer") -> str:
+                """Start a countdown timer in Lingmo Clock. The user is asked to confirm first.
+
+                Args:
+                    minutes: duration in minutes (decimals allowed, e.g. 0.5)
+                    label: what the timer is for
+                """
+                def run(c, p):
+                    secs = desktop.start_timer(minutes, label)
+                    return "Timer de %d s iniciado." % secs, label
+                return ctx.run("start_timer", run)
+            out.append(start_timer)
+
+        if on("desktop_actions"):
+            @tool(name="open_app", requires_confirmation=True)
+            def open_app(target: str) -> str:
+                """Open an installed application (by name, e.g. "lingmo-mail" or "Calculadora")
+                or an https:// address. The user is asked to confirm first.
+
+                Args:
+                    target: application name/id or https URL
+                """
+                def run(c, p):
+                    opened = desktop.open_target(target)
+                    return "Aberto: %s" % opened, opened
+                return ctx.run("open_app", run)
+            out.append(open_app)
+
         if on("files_write"):
             @tool(name="write_file", requires_confirmation=True)
             def write_file(path: str, content: str, mode: str = "create") -> str:
@@ -568,6 +727,14 @@ def normalize_args(function: str, args: dict) -> dict:
     if "notes_text" in args:
         args["notes"] = args.pop("notes_text")
     return args
+
+
+def _mail_details(acc: dict, draft: dict) -> str:
+    lines = ["De: %s" % acc.get("email"), "Para: %s" % draft["to"]]
+    if draft.get("cc"):
+        lines.append("Cc: %s" % draft["cc"])
+    lines += ["Assunto: %s" % draft["subject"], "", draft["body"]]
+    return "\n".join(lines)
 
 
 def _event_details(ev: dict) -> str:
@@ -711,6 +878,8 @@ def args_summary(function: str, args: dict) -> str:
         "calendar_agenda": "start_date", "web_search": "query", "read_web_page": "url",
         "create_note": "title", "append_to_note": "page_id", "create_event": "title",
         "create_reminder": "title", "create_task": "title", "write_file": "path",
+        "list_emails": "query", "read_email": "message_id", "send_email": "to", "reply_email": "message_id",
+        "create_alarm": "time", "start_timer": "label", "open_app": "target", "search_knowledge": "query",
     }.get(function)
     if function == "summarize_documents":
         value = ", ".join(Path(str(x)).name for x in (args.get("paths_list") or [])[:5])

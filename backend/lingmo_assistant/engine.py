@@ -94,13 +94,20 @@ class Engine:
         self.stored: dict[str, tuple[str, str]] = {}          # request_id -> (conversation, run_id)
         self.stored_answers: dict[str, dict[str, bool]] = {}  # run_id -> {request_id: allow}
         self.notified_no_tools: set[str] = set()
+        self.conv_agents: dict[str, str] = {}
+        from .flows import protocol as flows_protocol
+        self.flows_protocol = flows_protocol
+        self.extra = flows_protocol.Handler(self)
 
     # ------------------------------------------------------------------ requests
 
     def handle(self, request: dict) -> None:
         kind = request.get("type") if isinstance(request, dict) else None
         if kind == "chat":
-            self.chat(str(request.get("conversation_id") or ""), request.get("message"))
+            self.chat(str(request.get("conversation_id") or ""), request.get("message"),
+                      str(request.get("agent") or ""))
+        elif kind in self.flows_protocol.TYPES:
+            self.extra.handle(kind, request)
         elif kind == "confirm":
             self.confirm(str(request.get("request_id") or ""), bool(request.get("allow")))
         elif kind == "stop":
@@ -136,7 +143,7 @@ class Engine:
     def _valid_conversation(self, conv: str) -> bool:
         return 0 < len(conv) <= 100 and all(c.isalnum() or c in "-_" for c in conv)
 
-    def chat(self, conv: str, message) -> None:
+    def chat(self, conv: str, message, agent_ref: str = "") -> None:
         if not self._valid_conversation(conv):
             self.out.emit("error", message="Conversa inválida.")
             return
@@ -149,7 +156,17 @@ class Engine:
         if self.busy():
             self.out.emit("error", conversation_id=conv, message="Aguarde a resposta atual terminar.")
             return
-        self._start(lambda: self._chat(conv, message.strip()))
+        agent_def = None
+        if agent_ref:
+            from . import agents
+            agent_def = agents.find(agent_ref)
+            if agent_def is None:
+                self.out.emit("error", conversation_id=conv, message="Agente não encontrado: %s" % agent_ref)
+                return
+            self._remember_agent(conv, agent_def["id"])
+        else:
+            agent_def = self._conversation_agent(conv)
+        self._start(lambda: self._chat(conv, message.strip(), agent_def))
 
     def _start(self, target) -> None:
         self.stop_flag.clear()
@@ -199,9 +216,39 @@ class Engine:
 
     # ------------------------------------------------------------------ runs
 
-    def _setup(self, conv: str):
-        cfg = self.load_config()
-        self.cfg = cfg
+    # ------------------------------------------------------------------ agents per conversation
+
+    def _agents_file(self):
+        return config.data_dir() / "conversation-agents.json"
+
+    def _load_conv_agents(self) -> dict:
+        from . import store
+        data = store.read_json(self._agents_file(), {})
+        return data if isinstance(data, dict) else {}
+
+    def _remember_agent(self, conv: str, agent_id: str) -> None:
+        from . import store
+        data = self._load_conv_agents()
+        if data.get(conv) == agent_id:
+            return
+        data[conv] = agent_id
+        if len(data) > 2000:
+            data = dict(list(data.items())[-2000:])
+        try:
+            store.write_json(self._agents_file(), data)
+        except OSError:
+            pass
+
+    def _conversation_agent(self, conv: str):
+        from . import agents
+        aid = self._load_conv_agents().get(conv)
+        return agents.find(aid) if aid else None
+
+    def _setup(self, conv: str, agent_def=None):
+        from . import agents
+        base = self.load_config()
+        cfg = agents.effective_config(base, agent_def)
+        self.cfg = base
         if cfg.provider != "ollama":
             self.out.emit("error", conversation_id=conv,
                           message="O Assistente usa modelos do Ollama. Escolha Ollama em Configurações › IA.")
@@ -217,12 +264,13 @@ class Engine:
             self.out.emit("notice", conversation_id=conv,
                           message="O modelo %s não tem suporte a ferramentas: respondo só conversando. "
                                   "Escolha um modelo com ferramentas em Configurações › IA." % cfg.model)
-        model = self.model_factory(cfg) if self.model_factory else self.agent_mod.make_model(cfg)
-        agent = self.agent_mod.build_agent(cfg, self.ctx, self.db, tools_on, model=model)
+        model = self.model_factory(cfg) if self.model_factory else self.agent_mod.make_model(
+            cfg, agent_def.get("temperature") if agent_def else None)
+        agent = self.agent_mod.build_agent(cfg, self.ctx, self.db, tools_on, model=model, agent_def=agent_def)
         return cfg, agent, model
 
-    def _chat(self, conv: str, message: str) -> None:
-        setup = self._setup(conv)
+    def _chat(self, conv: str, message: str, agent_def=None) -> None:
+        setup = self._setup(conv, agent_def)
         if setup is None:
             return
         cfg, agent, model = setup
@@ -236,7 +284,7 @@ class Engine:
             self._fail(conv, cfg, exc)
 
     def _resume_stored(self, conv: str, run_id: str, answers: dict[str, bool]) -> None:
-        setup = self._setup(conv)
+        setup = self._setup(conv, self._conversation_agent(conv))
         if setup is None:
             return
         cfg, agent, model = setup
@@ -421,9 +469,13 @@ class Engine:
         except Exception as exc:
             log.warning("list failed: %s", type(exc).__name__)
             sessions = []
+        conv_agents = self._load_conv_agents()
         for s in sessions or []:
+            if str(s.session_id).startswith("flow-"):
+                continue      # workflow "ask an agent" runs, not conversations
             title = (s.session_data or {}).get("session_name") or "Conversa"
-            items.append({"id": s.session_id, "title": title, "updated": s.updated_at or s.created_at or 0})
+            items.append({"id": s.session_id, "title": title, "updated": s.updated_at or s.created_at or 0,
+                          "agent": conv_agents.get(s.session_id, "")})
         self.out.emit("conversations", items=items)
 
     def history(self, conv: str) -> None:
@@ -474,7 +526,8 @@ class Engine:
                             pending.append({"request_id": req.id, "tool": pv.tool, "function": pv.function,
                                             "title": pv.title, "details": pv.details})
                         self.stored[req.id] = (conv, run.run_id)
-        self.out.emit("history", conversation_id=conv, title=title, messages=messages, pending=pending)
+        self.out.emit("history", conversation_id=conv, title=title, messages=messages, pending=pending,
+                      agent=self._load_conv_agents().get(conv, ""))
 
     def delete_conversation(self, conv: str) -> None:
         """Removes the app's own chat history for this conversation (never user data)."""
@@ -567,6 +620,7 @@ def serve(stdin, out: Output, engine: Engine) -> None:
     # stdin closed: finish the current answer (a pending confirmation counts as
     # unanswered and stays paused in the database), then exit
     engine.closing.set()
+    engine.extra.closing()
     if engine.worker is not None:
         engine.worker.join()
 
@@ -578,6 +632,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 0
     if "--version" in argv:
         print(__version__)
+        return 0
+    if "--flows-daemon" in argv or "--run" in argv or "--status" in argv:
+        from .flows import daemon
+        return daemon.main(argv)
+    if "--voice-status" in argv:
+        from . import voice
+        print(voice.dumps_status())
         return 0
     os.environ["AGNO_TELEMETRY"] = "false"
     # Local only: never send prompts to the Ollama cloud

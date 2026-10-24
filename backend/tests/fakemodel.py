@@ -34,7 +34,11 @@ class FakeModel(LingmoOllama):
         self.usage.eval_ns += 500_000_000
 
     def invoke(self, messages, assistant_message, **kwargs):
+        self.seen.append([(m.role, m.content) for m in messages])
         step = self.script.pop(0) if self.script else ("text", "resumo")
         r = ModelResponse()
+        if step[0] == "tool":
+            r.tool_calls = [{"type": "function", "function": {"name": step[1], "arguments": json.dumps(step[2])}}]
+            return r
         r.content = step[1]
         return r
