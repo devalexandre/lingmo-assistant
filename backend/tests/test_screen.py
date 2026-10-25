@@ -151,3 +151,116 @@ def test_screen_question_never_reopens_the_overlay(make_engine, home):
         return {getattr(f, "name", "") for f in agent.tools}
     assert "intent_screen_ask" in names()
     assert "intent_screen_ask" not in names(exclude_functions=screen.EXCLUDED_FUNCTIONS)
+
+
+# ---- OCR that can't be trusted (Hebrew read with por+eng once made the model
+# "translate" a story about Docker that wasn't on the screen)
+
+GARBAGE = "bR P 3993 20:30-5 (3w D1) am N0 SD PONN"
+
+
+def test_unreliable_ocr_is_never_given_to_the_model(make_engine):
+    eng, cap, models = make_engine([("text", "Não consegui ler o texto com segurança.")])
+    ask(eng, ocr_text=GARBAGE, ocr_status="unreliable", ocr_script="", intent="translate")
+    cap.wait_for("done")
+    assert cap.wait_for("image_mode")["ocr_chars"] == 0
+    system = models[0].system[0]
+    assert GARBAGE not in system and "OCR text of the selected area" not in system
+    assert "NO RELIABLE TEXT" in system and "never invent content" in system
+    assert "nunca invente conteúdo" in system
+
+
+def test_missing_pack_says_which_script(make_engine):
+    eng, cap, models = make_engine([("text", "…")])
+    ask(eng, ocr_text="", ocr_status="missing", ocr_script="Hebrew", intent="explain",
+        message="Explique esta área.", language="português (Brasil)")
+    cap.wait_for("done")
+    system = models[0].system[0]
+    assert "Hebrew script" in system and "reading pack" in system
+    assert "do not transliterate" in system
+
+
+def test_translate_chip_asks_for_the_translation_only(make_engine):
+    eng, cap, models = make_engine([("text", "…")])
+    ask(eng, ocr_text="Завтра", ocr_status="ok", ocr_script="Cyrillic", intent="translate",
+        language="português (Brasil)")
+    cap.wait_for("done")
+    assert "TRANSLATE: reply with only the translation into português (Brasil)" in models[0].system[0]
+
+
+def test_missing_pack_without_vision_explains_the_install(make_engine):
+    eng, cap, models = make_engine([], vision=False)
+    ask(eng, ocr_text="", ocr_status="missing", ocr_script="Hebrew", message="O que diz aqui?")
+    err = cap.wait_for("error")
+    assert "Para ler hebraico, instale o pacote de leitura" in err["message"]
+    assert models == []
+    ask(eng, ocr_text=GARBAGE, ocr_status="unreliable")
+    assert "com segurança" in cap.wait_for("error", 2)["message"]
+
+
+def test_reliable_ocr_is_the_primary_source_for_text_chips(make_engine):
+    eng, cap, models = make_engine([("text", "Amanhã às 20:30")])
+    ask(eng, ocr_text="מחר ב-20:30", ocr_status="ok", ocr_script="Hebrew", ocr_confidence=91,
+        intent="translate", language="português (Brasil)")
+    cap.wait_for("done")
+    system = models[0].system[0]
+    # translating reliable text: the text goes in the message, no picture
+    assert models[0].images == [] and "isn't needed" in system
+    assert "NO RELIABLE TEXT" not in system and "in português (Brasil) unless" in system
+    # explaining: the picture too, with the OCR text as the primary source
+    eng2, cap2, models2 = make_engine([("text", "Explicação")])
+    ask(eng2, ocr_text="מחר ב-20:30", ocr_status="ok", ocr_script="Hebrew", ocr_confidence=91,
+        intent="explain", conversation_id="tela3")
+    cap2.wait_for("done")
+    system2 = models2[0].system[0]
+    assert "primary source for the words" in system2 and "confidence 91%" in system2 and "מחר ב-20:30" in system2
+    assert models2[0].images == [[PNG]]
+
+
+def test_prompt_building():
+    req = screen.parse({"ocr_text": GARBAGE, "ocr_status": "unreliable", "intent": "explain",
+                        "image": base64.b64encode(PNG).decode()})
+    assert req.ocr_text == "" and not req.ocr_reliable
+    assert GARBAGE not in screen.context(req, vision=True)
+    # an older client (no ocr_status): the text is taken, as a hint
+    old = screen.parse({"ocr_text": "Hello"})
+    assert old.ocr_reliable and "Hello" in screen.context(old, vision=False)
+    # junk in the new fields is ignored
+    odd = screen.parse({"ocr_text": "Hi", "ocr_status": "maybe", "intent": "rm -rf", "ocr_script": "He brew",
+                        "ocr_confidence": "x", "language": 5})
+    assert (odd.ocr_status, odd.intent, odd.ocr_script, odd.ocr_confidence, odd.language) == ("", "", "", -1, "")
+    # without a language from the client: the system's
+    assert screen.system_language() in screen.context(old, vision=False)
+
+
+def test_unreadable_script_without_its_pack_is_not_guessed(make_engine):
+    """A small vision model "translated" Hebrew it couldn't read: for translate
+    and copy without the pack, the answer says so and the model isn't asked."""
+    eng, cap, models = make_engine([("text", "invented")])
+    ask(eng, ocr_text="", ocr_status="missing", ocr_script="Hebrew", intent="translate")
+    text = cap.wait_for("error")["message"]
+    assert "hebraico" in text and "Instalar" in text and "inventada" in text
+    assert models == []
+    # a typed "traduz isso" counts as translating
+    ask(eng, ocr_text="", ocr_status="missing", ocr_script="Arabic", message="traduz isso pra mim")
+    assert "árabe" in cap.wait_for("error", 2)["message"] and models == []
+    # a free question still goes to the model, with the warning in the prompt
+    eng2, cap2, models2 = make_engine([("text", "É uma mensagem em hebraico.")])
+    ask(eng2, ocr_text="", ocr_status="missing", ocr_script="Hebrew", intent="", conversation_id="tela2",
+        message="O que é isso?")
+    cap2.wait_for("done")
+    assert "cannot read Hebrew script" in models2[0].system[0]
+    # Chinese: the vision model reads it, so it is asked
+    assert screen.cannot_read_message(screen.parse({"ocr_status": "missing", "ocr_script": "Han",
+                                                    "intent": "translate", "image": base64.b64encode(PNG).decode()})) == ""
+
+
+def test_translate_reliable_text_goes_in_the_message_without_the_picture(make_engine):
+    eng, cap, models = make_engine([("text", "Amanhã")])
+    ask(eng, ocr_text="מחר", ocr_status="ok", ocr_script="Hebrew", intent="translate")
+    cap.wait_for("done")
+    assert cap.wait_for("image_mode")["mode"] == "ocr"
+    assert models[0].images == []
+    eng.handle({"type": "history", "conversation_id": "tela1"})
+    users = [m for m in cap.wait_for("history")["messages"] if m["role"] == "user"]
+    assert users[0]["text"] == "Traduza para o português"     # the question, not the screen text

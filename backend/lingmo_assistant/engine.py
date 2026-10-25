@@ -200,13 +200,23 @@ class Engine:
             self.out.emit("error", conversation_id=conv,
                           message="Nenhum modelo de IA escolhido. Escolha um em Configurações › IA.")
             return
-        vision = bool(req.image) and self.vision_supported_fn(model_name) is True
-        if not vision and not req.ocr_text:
-            self.out.emit("error", conversation_id=conv, message=screen.no_vision_message(model_name))
+        if not req.intent:
+            req.intent = screen.guess_intent(message)
+        refusal = screen.cannot_read_message(req)
+        if refusal:
+            self.out.emit("error", conversation_id=conv, message=refusal)
             return
+        can_see = bool(req.image) and self.vision_supported_fn(model_name) is True
+        if not can_see and not req.ocr_text:
+            self.out.emit("error", conversation_id=conv, message=screen.no_text_message(req, model_name))
+            return
+        # Translating reliable text: the words are enough (and much faster)
+        vision = can_see and not screen.text_only(req)
         # A direct answer: no reasoning for screen questions, whatever ai.conf says
-        setup = self._setup(conv, agent_def, think=False, extra_context=screen.context(req, vision),
-                            exclude_functions=screen.EXCLUDED_FUNCTIONS)
+        # Translating or copying text needs no tools: a shorter prompt, a steadier small model
+        setup = self._setup(conv, agent_def, think=False, extra_context=screen.context(req, vision, can_see),
+                            exclude_functions=screen.EXCLUDED_FUNCTIONS, tools=not screen.text_only(req),
+                            temperature=screen.TEXT_TEMPERATURE if screen.text_only(req) else None)
         if setup is None:
             return
         cfg, agent, model = setup
@@ -218,9 +228,15 @@ class Engine:
         if vision:
             from agno.media import Image
             images = [Image(content=req.image, mime_type=req.mime, format=req.mime.split("/")[-1])]
+        metadata = {"screen": True, "screen_mode": "vision" if vision else "ocr"}
+        prompt = message
+        if screen.text_only(req):
+            # The text goes in the message; the history shows the question alone
+            prompt = screen.with_text(message, req)
+            metadata["screen_question"] = message
         try:
-            stream = agent.run(message, session_id=conv, stream=True, stream_events=True, images=images,
-                               metadata={"screen": True, "screen_mode": "vision" if vision else "ocr"})
+            stream = agent.run(prompt, session_id=conv, stream=True, stream_events=True, images=images,
+                               metadata=metadata)
             self._drive(conv, agent, model, cfg, stream, clock,
                         before_done=lambda: self._name_conversation(conv, message, screen.title(message)))
         except Exception as exc:
@@ -328,7 +344,8 @@ class Engine:
         return agents.find(aid) if aid else None
 
     def _setup(self, conv: str, agent_def=None, think: Optional[bool] = None, extra_context: str = "",
-               exclude_functions: frozenset = frozenset()):
+               exclude_functions: frozenset = frozenset(), tools: bool = True,
+               temperature: Optional[float] = None):
         from . import agents
         import dataclasses
         base = self.load_config()
@@ -345,14 +362,15 @@ class Engine:
                           message="Nenhum modelo de IA escolhido. Escolha um em Configurações › IA.")
             return None
         supported = self.tools_supported_fn(cfg.model)
-        tools_on = supported is not False and bool(cfg.enabled_tools())
+        tools_on = tools and supported is not False and bool(cfg.enabled_tools())
         if supported is False and conv not in self.notified_no_tools:
             self.notified_no_tools.add(conv)
             self.out.emit("notice", conversation_id=conv,
                           message="O modelo %s não tem suporte a ferramentas: respondo só conversando. "
                                   "Escolha um modelo com ferramentas em Configurações › IA." % cfg.model)
-        model = self.model_factory(cfg) if self.model_factory else self.agent_mod.make_model(
-            cfg, agent_def.get("temperature") if agent_def else None)
+        if temperature is None and agent_def:
+            temperature = agent_def.get("temperature")
+        model = self.model_factory(cfg) if self.model_factory else self.agent_mod.make_model(cfg, temperature)
         agent = self.agent_mod.build_agent(cfg, self.ctx, self.db, tools_on, model=model, agent_def=agent_def,
                                            extra_context=extra_context, exclude_functions=exclude_functions)
         return cfg, agent, model
@@ -581,9 +599,12 @@ class Engine:
                 if status == "REGENERATED":
                     continue
                 text = run.input.input_content if run.input else ""
+                meta = getattr(run, "metadata", None) or {}
+                if meta.get("screen") and isinstance(meta.get("screen_question"), str):
+                    # the question, without the screen text it carried
+                    text = meta["screen_question"]
                 if isinstance(text, str) and text:
                     item = {"role": "user", "text": text}
-                    meta = getattr(run, "metadata", None) or {}
                     if meta.get("screen"):
                         # asked about an area of the screen (the picture itself isn't stored)
                         item["screen"] = str(meta.get("screen_mode") or "ocr")
